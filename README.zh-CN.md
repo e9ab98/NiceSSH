@@ -15,6 +15,7 @@
 - 👤 **Git 身份管理** — 姓名、邮箱、密钥、目录匹配(`includeIf`)
 - 📁 **项目管理** — 注册本地仓库,绑定到指定身份
 - 🪄 **目录自动匹配** — `~/work/` 下的仓库自动使用工作身份,零摩擦
+- 🪄 **扫描并导入** — 从你手写的 `~/.gitconfig` `includeIf` 块和 `~/.ssh/` 中未被绑定的孤立 key 自动发现身份,一键导入
 - 🔍 **可视化的 SSH 配置编辑** — 你手写的配置块按字节原样保留
 - 🧪 **SSH 连接测试** — 验证 `git push` 命中的是哪个 GitHub 账号
 - ↩️ **变更历史 + 一键回滚** — 对 `~/.ssh/config`、`~/.gitconfig` 以及应用配置的所有改动都会被快照
@@ -89,6 +90,19 @@ sudo dpkg -i NiceSSH-v*-linux-x64.deb
 8. 推送到 GitHub —— 命中的是工作账号,而不是个人账号。
 
 再为 `~/personal/` 添加一个 Personal 身份,基本就齐活了。
+
+## 从手写配置迁移过来
+
+如果你已经手写过 `~/.gitconfig` 的 `includeIf` 块,或者 `~/.ssh/` 里有一些未被绑定的密钥,NiceSSH 可以直接把它们识别为身份并导入。
+
+1. 打开「身份」视图,点击「**扫描并导入**」。
+2. NiceSSH 会扫描:
+   - `~/.gitconfig` 中所有的 `[includeIf "gitdir:..."]` 块,以及对应的 `~/.gitconfig-<label>` 子文件。
+   - `~/.ssh/*.pub` 中所有**未被**任何 `includeIf` 引用的孤立密钥。
+3. 弹窗里会展示每个候选身份及其**来源**(provenance),并标记出与现有身份冲突(同名 label 或同 key 路径)的项。
+4. 默认会预选所有无冲突的项。取消勾选你不要的,然后点「导入」。
+
+扫描过程**不会写入任何文件**,也不会修改你的 `~/.gitconfig` 和 `~/.ssh/` —— 只有点击「导入」之后才会把候选写入应用配置。
 
 ## 实现原理
 
@@ -173,10 +187,19 @@ cargo tauri build
 ├── src/                      # React 前端
 │   ├── main.tsx
 │   ├── App.tsx               # 侧边栏 + 6 个路由
-│   ├── components/
-│   ├── views/                # 项目 / 身份 / SSH 密钥 / 配置 / 历史 / 设置
+│   ├── components/           # 通用: Sidebar、ContextMenu、ThemeProvider、ui/
+│   ├── views/                # 项目 / 身份 / SSH 密钥 / SSH 配置 / 历史 / 设置
+│   ├── features/             # 功能弹窗
+│   │   ├── identityForm/     # 新建 / 编辑身份
+│   │   ├── keyGenerator/     # ED25519 / RSA 4096 生成 + 口令
+│   │   ├── passphraseDialog/ # 给加密 key 走 ssh-add 解锁
+│   │   ├── connectionTester/ # ssh -T git@<host> 结果弹窗
+│   │   ├── identitySwitcher/ # 切换某仓库的 Git 身份
+│   │   ├── scanResults/      # 扫描并导入 弹窗(候选 + 来源)
+│   │   └── updateNotification# 应用内更新 toast + 设置 → 更新 tab
 │   ├── store/                # Zustand
 │   ├── ipc/                  # 类型化的 Tauri 命令封装
+│   ├── lib/                  # 框架层胶水(更新器缓存 + 工具函数)
 │   ├── i18n/                 # 英文 / 简体中文翻译文件
 │   └── hooks/
 └── src-tauri/                # Rust 后端
@@ -185,7 +208,7 @@ cargo tauri build
     ├── capabilities/
     └── src/
         ├── main.rs
-        ├── lib.rs            # Tauri 构建器 + IPC 命令注册
+        ├── lib.rs            # Tauri 构建器 + IPC 命令注册(28 个)
         ├── paths.rs          # ~/ 展开、文件路径解析
         ├── fs_safety.rs      # atomic_write(tmp + rename + chmod)
         ├── history.rs        # 50 条快照索引 + 回滚
@@ -193,8 +216,12 @@ cargo tauri build
         ├── ssh_config.rs     # 解析 + 序列化(保留用户块)
         ├── git_config.rs     # includeIf 追加 + 每身份子文件
         ├── ssh_keys.rs       # 列出 + 删除
+        ├── scanner.rs        # 从既有 includeIf / 孤立 key 中发现身份
         ├── runner.rs         # 带 30s 超时的 exec
-        └── commands/         # 23 个 #[tauri::command] 处理函数
+        └── commands/         # 28 个 #[tauri::command] 处理函数
+            ├── scanner.rs        # scan_existing_identities
+            ├── ssh_add_askpass.rs# ssh-add + GUI 口令对话框(Unix setsid)
+            └── …
 ```
 
 ### 添加翻译
@@ -208,6 +235,25 @@ cargo tauri build
 - **口令永不入盘**。它仅保存在解锁对话框的 React state 中,调用 `ssh-add` 一次后即丢弃。
 - **SSH 私钥** 仅被应用**读取**(用于计算指纹),不会复制或外发。
 - `~/.nicessh/` 目录及其 `history/` 子目录只包含元数据 + 公开配置文件的 before/after diff。**私钥材料永远不会进入任何快照**。
+
+## 更新
+
+NiceSSH 每次启动时检查一次新版本(带 24h 缓存)。当有可用新版本时,会显示一条非阻塞的 toast 提示,提供「立即升级 / 稍后 / ×」三个按钮。点击「立即升级」会在后台下载,下载完成后应用会提示你关闭并重新打开以应用新版本。
+
+也可以在「**设置 → 更新**」中按需检查。该 tab 显示:当前版本、最新可用版本,以及一个「关闭更新通知」的开关。
+
+### 签名与首次升级提示
+
+更新从 GitHub Releases 拉取,并通过 Tauri updater 插件做**签名校验**(`TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` 在发布阶段是必填密钥,缺失则发布任务直接失败)。因此你看到的「更新提示」一定对应着真实、经过签名的构建。
+
+**第一次可用的应用内升级路径是 v0.3.0 → v0.3.1**:v0.3.0 落地了整套框架(代码、设置 UI、CI 密钥校验),v0.3.1 才补上 per-binary 签名与 `latest.json` 生成 —— 所以 v0.3.0 自身在后续运行中**还不会**弹出更新提示。
+
+### 注意事项(1.0 之前)
+
+- **macOS**: 自动更新后的安装包在首次打开时仍会触发 Gatekeeper。和手动下载的处理方式相同:右键 → 打开 → 「打开」。公证是 v1.0.0 的工作。
+- **Windows**: 自动更新后的安装包在首次打开时仍会触发 SmartScreen。和手动下载的处理方式相同:「更多信息」→ 「仍要运行」。EV 代码签名是 v1.0.0 的工作。
+- **Linux `.deb` / `.rpm`**: 升级需要 `sudo`(底层调用系统包管理器)。Linux 上推荐用 `.AppImage` 渠道做自动更新 —— 它不需要 root 即可就地升级。
+- **手动重启**: 下载完成后,NiceSSH 会提示你关闭并重新打开应用以应用更新。一键进程内重启(`@tauri-apps/plugin-process`)计划在后续版本中提供;在此之前,手动关闭再打开的体验完全一致。
 
 ## 当前限制(MVP)
 

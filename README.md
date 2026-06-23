@@ -15,6 +15,7 @@
 - 👤 **Git identity management** — name, email, key, directory match (`includeIf`)
 - 📁 **Project management** — register local repos, bind them to identities
 - 🪄 **Directory auto-matching** — `~/work/` repos automatically use your work identity, zero-friction
+- 🪄 **Scan & Import** — detect existing identities from your hand-written `~/.gitconfig` `includeIf` blocks and orphan `~/.ssh/` keys, import in one click
 - 🔍 **Visual SSH config editor** — your hand-written blocks are preserved byte-for-byte
 - 🧪 **SSH connection test** — verify which GitHub account a push will hit
 - ↩️ **Modification history with one-click rollback** — every change to `~/.ssh/config`, `~/.gitconfig`, and the app config is snapshotted
@@ -89,6 +90,19 @@ sudo dpkg -i NiceSSH-v*-linux-x64.deb
 8. **Push** to GitHub — it's that account, not your personal one.
 
 Add a second identity (Personal) for `~/personal/`, and you're done.
+
+## Migrating from a hand-written setup
+
+Already have `~/.gitconfig` `includeIf` blocks or SSH keys lying around? NiceSSH can read them and turn them into managed identities.
+
+1. Open **Identities** and click **Scan & Import**.
+2. NiceSSH inspects:
+   - Every `[includeIf "gitdir:..."]` block in `~/.gitconfig` and the matching `~/.gitconfig-<label>` subfile.
+   - Every `~/.ssh/*.pub` key that is *not* already referenced by an `includeIf` (orphan keys).
+3. The dialog shows each candidate with its **provenance** — where it was found — and flags any that conflict with an existing identity (same label or same key path).
+4. The non-conflicting entries are pre-selected. Untick what you don't want, then click **Import**.
+
+Nothing is written until you click **Import**, and the original `~/.gitconfig` and `~/.ssh/` files are never modified by the scan itself.
 
 ## How it works under the hood
 
@@ -173,10 +187,19 @@ cargo tauri build
 ├── src/                      # React frontend
 │   ├── main.tsx
 │   ├── App.tsx               # Sidebar + 6 routes
-│   ├── components/
-│   ├── views/                # Projects / Identities / SSH Keys / Config / History / Settings
+│   ├── components/           # Shared: Sidebar, ContextMenu, ThemeProvider, ui/
+│   ├── views/                # Projects / Identities / SSH Keys / SSH Config / History / Settings
+│   ├── features/             # Feature dialogs
+│   │   ├── identityForm/     # Create / edit identity
+│   │   ├── keyGenerator/     # ED25519 / RSA 4096 generation + passphrase
+│   │   ├── passphraseDialog/ # ssh-add unlock for encrypted keys
+│   │   ├── connectionTester/ # ssh -T git@<host> result popup
+│   │   ├── identitySwitcher/ # Switch identity on a project
+│   │   ├── scanResults/      # Scan & Import dialog (candidates + provenance)
+│   │   └── updateNotification/# In-app update toast + Settings → Updates tab
 │   ├── store/                # Zustand
 │   ├── ipc/                  # Typed Tauri command wrappers
+│   ├── lib/                  # Framework glue (updater cache + helpers)
 │   ├── i18n/                 # English / 简体中文 translation files
 │   └── hooks/
 └── src-tauri/                # Rust backend
@@ -185,7 +208,7 @@ cargo tauri build
     ├── capabilities/
     └── src/
         ├── main.rs
-        ├── lib.rs            # Tauri builder + IPC command registry
+        ├── lib.rs            # Tauri builder + IPC command registry (28 commands)
         ├── paths.rs          # ~/ expansion, file path resolution
         ├── fs_safety.rs      # atomic_write (tmp + rename + chmod)
         ├── history.rs        # 50-snapshot index + rollback
@@ -193,8 +216,12 @@ cargo tauri build
         ├── ssh_config.rs     # parse + serialize (preserves user blocks)
         ├── git_config.rs     # includeIf appender + per-identity subfiles
         ├── ssh_keys.rs       # list + delete
+        ├── scanner.rs        # detect identities from existing includeIf / orphan keys
         ├── runner.rs         # exec with 30s timeout
-        └── commands/         # 23 #[tauri::command] handlers
+        └── commands/         # 28 #[tauri::command] handlers
+            ├── scanner.rs        # scan_existing_identities
+            ├── ssh_add_askpass.rs# ssh-add + GUI PassphraseDialog (Unix setsid)
+            └── ...
 ```
 
 ### Adding translations
@@ -220,6 +247,12 @@ apply the new version.
 You can also check on demand: **Settings → Updates → Check now**. The
 tab shows your current version, the latest available version, and a
 toggle to opt out of update notifications.
+
+### Signing & first-upgrade note
+
+Updates are pulled from GitHub Releases and **signature-verified** with the Tauri updater plugin (the `TAURI_SIGNING_PRIVATE_KEY` / `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets are required at publish time, and the release job fails closed if they are missing). A user-visible update prompt therefore implies a genuine, signed build.
+
+The very first in-app update path runs on **v0.3.0 → v0.3.1**: v0.3.0 ships the framework (code, Settings UI, CI secret check) and v0.3.1 adds the per-binary signing + `latest.json` generation, so v0.3.0 itself does not yet surface an update toast on subsequent runs.
 
 ### Caveats (pre-1.0.0)
 

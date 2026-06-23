@@ -28,24 +28,24 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             label: darwin-arm64
-            artifact: EasySSH-darwin-arm64
+            artifact: NiceSSH-darwin-arm64
             bundler_subdir: dmg
             extra_bundles: app
           - os: macos-14
             target: x86_64-apple-darwin
             label: darwin-x64
-            artifact: EasySSH-darwin-x64
+            artifact: NiceSSH-darwin-x64
             bundler_subdir: dmg
             extra_bundles: app
           - os: windows-2022
             target: x86_64-pc-windows-msvc
             label: windows-x64
-            artifact: EasySSH-windows-x64
+            artifact: NiceSSH-windows-x64
             bundler_subdir: msi
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             label: linux-x64
-            artifact: EasySSH-linux-x64
+            artifact: NiceSSH-linux-x64
             bundler_subdir: appimage
     runs-on: ${{ matrix.os }}
     steps:
@@ -180,7 +180,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EasySSH-darwin-universal-log
+          name: NiceSSH-darwin-universal-log
           if-no-files-found: ignore
           path: build-universal.log
 
@@ -188,7 +188,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: EasySSH-darwin-universal
+          name: NiceSSH-darwin-universal
           if-no-files-found: warn
           path: |
             src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
@@ -259,7 +259,7 @@ jobs:
         if: always()
         uses: actions/upload-artifact@v4
         with:
-          name: EasySSH-linux-x64-deb-log
+          name: NiceSSH-linux-x64-deb-log
           if-no-files-found: ignore
           path: build-deb.log
 
@@ -267,7 +267,7 @@ jobs:
         if: success()
         uses: actions/upload-artifact@v4
         with:
-          name: EasySSH-linux-x64-deb
+          name: NiceSSH-linux-x64-deb
           if-no-files-found: warn
           path: src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*
 
@@ -397,7 +397,7 @@ jobs:
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.resolve.outputs.current_tag }}
-          name: 'EasySSH ${{ steps.resolve.outputs.current_tag }}'
+          name: 'NiceSSH ${{ steps.resolve.outputs.current_tag }}'
           draft: false
           prerelease: ${{ contains(steps.resolve.outputs.current_tag, '-rc') || contains(steps.resolve.outputs.current_tag, '-beta') || contains(steps.resolve.outputs.current_tag, '-alpha') }}
           body_path: ${{ steps.changelog.outputs.notes_file }}
