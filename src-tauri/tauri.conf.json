@@ -51,7 +51,7 @@
       "endpoints": [
         "https://github.com/e9ab98/NiceSSH/releases/latest/download/latest.json"
       ],
-      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEEwQTA3M0FENjNDMDNEODAKUldTQVBjQmpyWE9nb0lMbDNOSndrV0Z2NWwvWllrZlVvY1RNSkdJVUdvMTdtUlVHVUNSRGNPV2oK",
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJBNzdCMUI5Mzc4RjA0MUMKUldRY0JJODN1YkYzS2duMmc5NS83Qzc4QTNUZDJ6cnFPOVo3TzJ0Z2RuOXE3dVZKVkZ2UExUK0sK",
       "windows": {
         "installMode": "passive"
       }
