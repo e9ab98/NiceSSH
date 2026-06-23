@@ -1,0 +1,219 @@
+{
+  "app": {
+    "name": "NiceSSH"
+  },
+  "sidebar": {
+    "projects": "项目",
+    "identities": "身份",
+    "sshKeys": "SSH 密钥",
+    "sshConfig": "SSH 配置",
+    "history": "历史",
+    "settings": "设置"
+  },
+  "common": {
+    "save": "保存",
+    "saving": "保存中…",
+    "cancel": "取消",
+    "delete": "删除",
+    "edit": "编辑",
+    "close": "关闭",
+    "retry": "重试",
+    "browse": "浏览…",
+    "loading": "加载中…",
+    "done": "完成",
+    "current": "当前",
+    "add": "添加",
+    "adding": "添加中…",
+    "unlock": "解锁",
+    "unlocking": "解锁中…",
+    "generate": "生成",
+    "generating": "生成中…"
+  },
+  "projects": {
+    "title": "项目",
+    "addProject": "+ 添加项目",
+    "selectPrompt": "请选择一个项目查看详情，或点击 + 添加项目 开始。",
+    "path": "路径",
+    "identity": "身份",
+    "noIdentity": "（未绑定 — 绑定后才能推送）",
+    "key": "密钥",
+    "match": "匹配",
+    "noIdentityBadge": "未绑定身份",
+    "switchIdentity": "切换身份",
+    "bindIdentity": "绑定身份",
+    "detectedFromGit": "从 .git/config 自动识别",
+    "gitUsingUnknownKey": "Git 正在使用密钥 {{path}}，但 NiceSSH 没有对应的身份记录。",
+    "rebindIdentity": "重新绑定身份",
+    "testSsh": "测试 SSH",
+    "recentCommits": "最近提交",
+    "noCommits": "暂无提交",
+    "added": "项目已添加",
+    "addedWithIdentity": "项目已添加，身份已应用",
+    "switchedTo": "已切换到 {{label}}",
+    "removed": "项目已移除",
+    "deleteConfirm": "彻底删除该 NiceSSH 项目记录？（不会影响磁盘上的仓库本身）",
+    "removeMenu": "移除",
+    "deleteMenu": "删除…"
+  },
+  "identities": {
+    "title": "身份",
+    "newIdentity": "+ 新建身份",
+    "empty": "还没有身份。点击 + 新建身份 开始。",
+    "generateKey": "生成密钥",
+    "regenerateKey": "重新生成密钥",
+    "deleteConfirm": "删除该身份？",
+    "created": "身份已创建",
+    "keyGenerated": "密钥已生成",
+    "match": "匹配"
+  },
+  "identityForm": {
+    "newTitle": "新建身份",
+    "editTitle": "编辑身份",
+    "label": "标签",
+    "userName": "用户名",
+    "userEmail": "邮箱",
+    "keyPath": "密钥路径",
+    "matchPath": "匹配路径（用于 includeIf gitdir:）",
+    "matchPathPlaceholder": "~/work",
+    "hostAlias": "主机别名",
+    "gitHost": "Git 主机"
+  },
+  "keyGenerator": {
+    "title": "生成 SSH 密钥",
+    "keyName": "密钥名",
+    "keyType": "密钥类型",
+    "keyTypeEd25519": "ED25519（推荐）",
+    "keyTypeRsa": "RSA 4096",
+    "comment": "注释",
+    "passphrase": "密码（可选，至少 4 字符）",
+    "passphraseTooShort": "密码至少需要 4 个字符",
+    "success": "密钥已生成，公钥已复制到剪贴板",
+    "publicKeyLabel": "公钥",
+    "addToGithub": "将此密钥添加到你的 GitHub 账户：",
+    "githubKeysLink": "github.com/settings/keys"
+  },
+  "addProject": {
+    "title": "添加项目",
+    "projectPath": "项目路径",
+    "projectPathPlaceholder": "选择一个 git 仓库目录",
+    "projectNamePreview": "项目名：",
+    "identity": "身份",
+    "bindLater": "（稍后绑定）",
+    "notGitRepo": "所选目录不是 git 仓库",
+    "defaultHint": "默认：匹配你的 ~/.gitconfig sshCommand"
+  },
+  "identitySwitcher": {
+    "title": "切换身份",
+    "empty": "还没有身份，请先创建一个。"
+  },
+  "passphrase": {
+    "title": "解锁 SSH 密钥",
+    "passphrase": "密码",
+    "wrong": "密码错误，请重试"
+  },
+  "connectionTester": {
+    "title": "测试 SSH 连接",
+    "titleWithLabel": "测试 SSH 连接 — {{label}}",
+    "testing": "测试中…（最多需要 30 秒）",
+    "authenticated": "✓ 认证成功",
+    "timedOut": "⏱ 连接超时",
+    "failed": "✗ 失败",
+    "noOutput": "（无输出）"
+  },
+  "sshKeys": {
+    "title": "SSH 密钥",
+    "empty": "在 ~/.ssh/ 中没有找到 SSH 密钥",
+    "unlinked": "未关联身份",
+    "createIdentity": "创建身份",
+    "linkedIdentities_other": "还关联了 {{count}} 个身份(在\"身份\"页面管理)"
+  },
+  "sshConfig": {
+    "title": "SSH 配置",
+    "validate": "校验",
+    "valid": "配置正确",
+    "invalid": "配置有错误",
+    "empty": "~/.ssh/config 为空",
+    "managed": "托管"
+  },
+  "history": {
+    "title": "历史",
+    "revert": "回滚",
+    "rollbackConfirm": "回滚到该状态？当前状态会先保存。",
+    "rolledBack": "已回滚",
+    "empty": "暂无历史"
+  },
+  "settings": {
+    "title": "设置",
+    "tabs": {
+      "theme": "主题",
+      "language": "语言",
+      "logs": "日志",
+      "env": "SSH 环境",
+      "updates": "更新"
+    },
+    "theme": {
+      "mode": "模式",
+      "modeSystem": "跟随系统",
+      "modeLight": "浅色",
+      "modeDark": "深色"
+    },
+    "language": {
+      "label": "界面语言",
+      "english": "English",
+      "chinese": "简体中文"
+    },
+    "logs": {
+      "clearTitle": "清空所有修改历史（不可恢复）",
+      "clearButton": "清空历史",
+      "clearConfirm": "清空所有历史？该操作不可撤销。",
+      "cleared": "历史已清空"
+    },
+    "env": {
+      "loading": "加载中…"
+    },
+    "updates": {
+      "title": "更新",
+      "current": "当前版本",
+      "currentValue": "{{version}}",
+      "latest": "最新版本",
+      "latestValue": "{{version}}",
+      "notChecked": "尚未检查",
+      "upToDate": "已是最新",
+      "check": "立即检查",
+      "update": "立即升级",
+      "notify": "有新版本时通知",
+      "restartHint": "请关闭并重新打开应用以应用更新。",
+      "changelog": "更新日志",
+      "loadingChangelog": "正在加载更新日志...",
+      "changelogLoadFailed": "加载更新日志失败",
+      "viewLatestChangelog": "查看新版本更新日志",
+      "viewCurrentChangelog": "查看当前版本更新日志"
+    }
+  },
+  "scanResults": {
+    "title": "从系统导入",
+    "empty": "在 ~/.gitconfig 或 ~/.ssh/ 中没有找到已有身份配置。",
+    "fromGitconfig": "gitconfig",
+    "fromSsh": "ssh 目录",
+    "conflict": "冲突",
+    "conflictLabel": "标签已被使用",
+    "conflictKey": "密钥已被使用",
+    "import": "导入 {{count}} 个",
+    "importing": "导入中…",
+    "scan": "扫描并导入",
+    "scanning": "扫描中…",
+    "scanSuccess_one": "已导入 {{count}} 个身份",
+    "scanSuccess_other": "已导入 {{count}} 个身份",
+    "scanFailed": "扫描失败：{{message}}"
+  },
+  "update": {
+    "toast": {
+      "title": "NiceSSH {{version}} 已发布",
+      "update": "立即升级",
+      "later": "稍后",
+      "progress": "下载中… {{pct}}%",
+      "restart": "重启以应用更新",
+      "failed": "升级失败"
+    }
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "packages": {
+    "nicessh": {
+      "path": "src-tauri",
+      "package-name": "nicessh",
+      "release-type": "simple",
+      "changelog-path": "CHANGELOG.md"
+    }
+  },
+  "skip-github-pull-request": true,
+  "always-update": true
+}

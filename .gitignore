@@ -1,0 +1,39 @@
+# Build outputs
+node_modules/
+src-tauri/target/
+dist/
+build/
+
+# TypeScript build artifacts (tsc -b emits .js next to .ts when no noEmit).
+# src/**/*.ts is source; src/**/*.js is tsc output and should never be tracked.
+src/**/*.js
+src/**/*.js.map
+*.tsbuildinfo
+
+# Brainstorming & local working files
+.superpowers/
+docs/
+
+# Specs ARE tracked (intentional whitelist)
+!.gitignore
+!docs/superpowers/
+!docs/superpowers/specs/
+!docs/superpowers/specs/**
+
+# OS noise
+.DS_Store
+Thumbs.db
+*.swp
+
+# Editor
+.idea/
+.vscode/
+*.iml
+
+# Local env
+.env
+.env.local
+*.log
+.npmrc
+logo_square.png
+__pycache__/

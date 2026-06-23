@@ -1,0 +1,446 @@
+name: Build & Publish Release
+
+on:
+  workflow_run:
+    workflows: ["Tag"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      version:
+        description: 'Tag name to publish (e.g. v0.3.41). When empty, falls back to the last v*.*.* tag pushed by the Tag workflow.'
+        required: false
+        default: ''
+
+permissions:
+  contents: write
+  actions: read
+
+jobs:
+  # ---------------------------------------------------------------------------
+  # Per-platform native builds
+  # ---------------------------------------------------------------------------
+  build:
+    name: Build (${{ matrix.label }})
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: macos-14
+            target: aarch64-apple-darwin
+            label: darwin-arm64
+            artifact: EasySSH-darwin-arm64
+            bundler_subdir: dmg
+            extra_bundles: app
+          - os: macos-14
+            target: x86_64-apple-darwin
+            label: darwin-x64
+            artifact: EasySSH-darwin-x64
+            bundler_subdir: dmg
+            extra_bundles: app
+          - os: windows-2022
+            target: x86_64-pc-windows-msvc
+            label: windows-x64
+            artifact: EasySSH-windows-x64
+            bundler_subdir: msi
+          - os: ubuntu-22.04
+            target: x86_64-unknown-linux-gnu
+            label: linux-x64
+            artifact: EasySSH-linux-x64
+            bundler_subdir: appimage
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.target }}
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Linux build deps
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            wget
+
+      - name: Install Rust targets (Windows MSVC)
+        if: runner.os == 'Windows'
+        run: |
+          rustup target add ${{ matrix.target }}
+
+      - name: Build frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: Build Tauri bundle
+        shell: bash
+        run: |
+          set -o pipefail
+          pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundler_subdir }}${{ matrix.extra_bundles && format(',') }}${{ matrix.extra_bundles }} 2>&1 | tee build.log
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: List built artifacts
+        if: runner.os != 'Windows'
+        run: |
+          ls -la src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundler_subdir }}/
+
+      - name: List built artifacts (Windows)
+        if: runner.os == 'Windows'
+        shell: cmd
+        run: dir src-tauri\target\${{ matrix.target }}\release\bundle\${{ matrix.bundler_subdir }}\
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}-log
+          if-no-files-found: ignore
+          path: build.log
+
+      - name: Upload bundle artifact
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.artifact }}
+          if-no-files-found: error
+          path: |
+            src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundler_subdir }}/*
+            src-tauri/target/${{ matrix.target }}/release/bundle/updater/**
+            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.tar.gz*
+
+  # ---------------------------------------------------------------------------
+  # macOS universal2 — only on tag/dispatch; failure does NOT block the
+  # release job. The release will still ship the per-arch DMGs.
+  # ---------------------------------------------------------------------------
+  macos-universal:
+    name: Build (darwin-universal)
+    needs: build
+    if: |
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.name == 'Tag' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: macos-14
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: aarch64-apple-darwin,x86_64-apple-darwin
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Build frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: Build Tauri universal2
+        run: |
+          set -o pipefail
+          pnpm tauri build --target universal-apple-darwin 2>&1 | tee build-universal.log
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasySSH-darwin-universal-log
+          if-no-files-found: ignore
+          path: build-universal.log
+
+      - name: Upload universal2 bundle artifacts
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasySSH-darwin-universal
+          if-no-files-found: warn
+          path: |
+            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
+            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.tar.gz*
+            src-tauri/target/universal-apple-darwin/release/bundle/updater/**
+
+  # ---------------------------------------------------------------------------
+  # Linux .deb (extra, separate from AppImage which Tauri produces) — same
+  # non-blocking treatment: failure does not block the release.
+  # ---------------------------------------------------------------------------
+  linux-deb:
+    name: Build (linux-deb)
+    needs: build
+    if: |
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.name == 'Tag' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main') ||
+      github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-22.04
+    continue-on-error: true
+    steps:
+      - uses: actions/checkout@v5
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: x86_64-unknown-linux-gnu
+
+      - name: Cache cargo
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri -> target
+
+      - uses: pnpm/action-setup@v4
+        with:
+          version: 9
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+          cache: pnpm
+
+      - name: Install Linux build deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libappindicator3-dev \
+            librsvg2-dev \
+            patchelf \
+            libssl-dev \
+            file \
+            dpkg
+
+      - name: Build frontend
+        run: pnpm install --frozen-lockfile && pnpm build
+
+      - name: Build Tauri .deb
+        run: |
+          set -o pipefail
+          pnpm tauri build --target x86_64-unknown-linux-gnu --bundles deb 2>&1 | tee build-deb.log
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+
+      - name: Upload build log
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasySSH-linux-x64-deb-log
+          if-no-files-found: ignore
+          path: build-deb.log
+
+      - name: Upload .deb
+        if: success()
+        uses: actions/upload-artifact@v4
+        with:
+          name: EasySSH-linux-x64-deb
+          if-no-files-found: warn
+          path: src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*
+
+  # ---------------------------------------------------------------------------
+  # Final: collect all artifacts and publish GitHub Release.
+  # Only depends on the per-platform matrix `build` job — `macos-universal`
+  # and `linux-deb` are best-effort (continue-on-error above).
+  # ---------------------------------------------------------------------------
+  release:
+    name: Publish GitHub Release
+    needs: build
+    if: |
+      (github.event_name == 'workflow_run' &&
+       github.event.workflow_run.name == 'Tag' &&
+       github.event.workflow_run.conclusion == 'success' &&
+       github.event.workflow_run.head_branch == 'main') ||
+      (github.event_name == 'workflow_dispatch' && inputs.version != '')
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Verify Tauri updater signing secrets
+        env:
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        run: |
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
+            echo "::error::Tauri updater signing key not provided (TAURI_SIGNING_PRIVATE_KEY missing)."
+            echo "Set this secret in Settings > Secrets and variables > Actions before tagging v0.3.0+."
+            exit 1
+          fi
+          if [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
+            echo "::error::TAURI_SIGNING_PRIVATE_KEY_PASSWORD missing."
+            exit 1
+          fi
+          echo "Updater signing secrets present."
+
+      - name: Checkout repository
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+
+      - name: Resolve current tag
+        id: resolve
+        env:
+          EVENT_NAME: ${{ github.event_name }}
+          INPUT_VERSION: ${{ inputs.version }}
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_VERSION" ]; then
+            CURRENT_TAG="$INPUT_VERSION"
+          else
+            # Fetch tags first to make sure local tags list is up-to-date with remote
+            git fetch --tags --force
+            CURRENT_TAG=$(git tag -l "v*" --sort=-v:refname | head -1)
+          fi
+          if [ -z "$CURRENT_TAG" ]; then
+            echo "::error::No tag resolved for this release run."
+            exit 1
+          fi
+          echo "current_tag=${CURRENT_TAG}" >> "$GITHUB_OUTPUT"
+          echo "Resolved current tag: ${CURRENT_TAG}"
+
+      - name: Download all artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: artifacts
+
+      - name: Merge platform latest.json files
+        env:
+          CURRENT_TAG: ${{ steps.resolve.outputs.current_tag }}
+        run: |
+          node scripts/merge-updater.mjs
+
+      - name: Build release notes (CHANGELOG section + commit diff via git log)
+        id: changelog
+        env:
+          CURRENT_TAG: ${{ steps.resolve.outputs.current_tag }}
+        run: |
+          set -e
+          REPO="${GITHUB_REPOSITORY}"
+
+          # Make sure tags are fetched locally
+          git fetch --tags --force
+          
+          # Find previous tag using git describe
+          PREV_TAG=$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || true)
+
+          # CHANGELOG.md ## [<current_ver>] section if present
+          SECTION=""
+          if [ -f CHANGELOG.md ]; then
+            VER="${CURRENT_TAG#v}"
+            SECTION=$(awk -v ver="$VER" '
+              $0 ~ "^## [[]" { in_section = 0 }
+              $0 ~ "^## [[]" ver "[]]" { in_section = 1; next }
+              /^## [[]/ && in_section { in_section = 0 }
+              in_section
+            ' CHANGELOG.md)
+          fi
+
+          # Generate release-notes.md via local git log (100% deterministic and sync-delay safe)
+          {
+            if [ -n "$SECTION" ]; then
+              echo "$SECTION"
+              echo ""
+            fi
+            echo "### Commits"
+            echo ""
+            if [ -n "$PREV_TAG" ]; then
+              git log ${PREV_TAG}..${CURRENT_TAG} --oneline --pretty=format:"- [\`%h\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/%H) %s" | head -100
+              echo ""
+              echo ""
+              echo "**Full Changelog**: https://github.com/${REPO}/compare/${PREV_TAG}...${CURRENT_TAG}"
+            else
+              git log ${CURRENT_TAG} --oneline --pretty=format:"- [\`%h\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/%H) %s" | head -100
+              echo ""
+              echo ""
+              echo "_First tagged release of this line._"
+            fi
+          } > release-notes.md
+
+          if [ -s release-notes.md ]; then
+            echo "notes_file=release-notes.md" >> "$GITHUB_OUTPUT"
+          else
+            echo "notes_file=" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.resolve.outputs.current_tag }}
+          name: 'EasySSH ${{ steps.resolve.outputs.current_tag }}'
+          draft: false
+          prerelease: ${{ contains(steps.resolve.outputs.current_tag, '-rc') || contains(steps.resolve.outputs.current_tag, '-beta') || contains(steps.resolve.outputs.current_tag, '-alpha') }}
+          body_path: ${{ steps.changelog.outputs.notes_file }}
+          generate_release_notes: false
+          files: |
+            artifacts/**/*.dmg
+            artifacts/**/*.msi
+            artifacts/**/*.exe
+            artifacts/**/*.AppImage
+            artifacts/**/*.deb
+            artifacts/**/*.sig
+            artifacts/latest.json
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Roll back tag on release failure
+        if: failure()
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          # 复用 resolve step 的输出；如果 resolve 没跑过（dispatch 早退），则从 origin 拉
+          CURRENT_TAG="${{ steps.resolve.outputs.current_tag }}"
+          if [ -z "$CURRENT_TAG" ]; then
+            CURRENT_TAG=$(git ls-remote --tags --sort=-v:refname origin 'refs/tags/v*' | head -1 | sed 's|.*refs/tags/||')
+          fi
+          if [ -z "$CURRENT_TAG" ]; then
+            echo "No tag found to roll back; skipping."
+            exit 0
+          fi
+          echo "Release job failed (or this step itself failed) — rolling back tag ${CURRENT_TAG}"
+          git tag -d "${CURRENT_TAG}" 2>/dev/null || true
+          git push origin ":refs/tags/${CURRENT_TAG}" 2>/dev/null || true
+          if command -v gh >/dev/null 2>&1; then
+            gh release delete "${CURRENT_TAG}" --yes --cleanup-tag 2>/dev/null || true
+          fi
+          git config user.name "github-actions[bot]"
+          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
+          git pull --rebase origin main || true
+          LAST=$(git log -1 --pretty=format:'%H' --grep="chore(release): sync release-please manifest" || true)
+          if [ -n "$LAST" ]; then
+            git revert --no-edit "$LAST" || true
+            git push origin main || true
+            echo "Reverted manifest commit ${LAST}"
+          else
+            echo "No release-please manifest commit to revert"
+          fi

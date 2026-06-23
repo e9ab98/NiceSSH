@@ -1,0 +1,219 @@
+{
+  "app": {
+    "name": "NiceSSH"
+  },
+  "sidebar": {
+    "projects": "Projects",
+    "identities": "Identities",
+    "sshKeys": "SSH Keys",
+    "sshConfig": "SSH Config",
+    "history": "History",
+    "settings": "Settings"
+  },
+  "common": {
+    "save": "Save",
+    "saving": "Saving…",
+    "cancel": "Cancel",
+    "delete": "Delete",
+    "edit": "Edit",
+    "close": "Close",
+    "retry": "Retry",
+    "browse": "Browse…",
+    "loading": "Loading…",
+    "done": "Done",
+    "current": "current",
+    "add": "Add",
+    "adding": "Adding…",
+    "unlock": "Unlock",
+    "unlocking": "Unlocking…",
+    "generate": "Generate",
+    "generating": "Generating…"
+  },
+  "projects": {
+    "title": "Projects",
+    "addProject": "+ Add Project",
+    "selectPrompt": "Select a project to see details, or click + Add Project to get started.",
+    "path": "Path",
+    "identity": "Identity",
+    "noIdentity": "(none — bind one to push)",
+    "key": "Key",
+    "match": "Match",
+    "noIdentityBadge": "no identity bound",
+    "switchIdentity": "Switch Identity",
+    "bindIdentity": "Bind Identity",
+    "detectedFromGit": "Detected from .git/config",
+    "gitUsingUnknownKey": "Git is using key {{path}}, which is not tracked by any identity.",
+    "rebindIdentity": "Rebind Identity",
+    "testSsh": "Test SSH",
+    "recentCommits": "Recent commits",
+    "noCommits": "No commits",
+    "added": "Project added",
+    "addedWithIdentity": "Project added + identity applied",
+    "switchedTo": "Switched to {{label}}",
+    "removed": "Project removed",
+    "deleteConfirm": "Permanently delete this project from NiceSSH? (This does not affect the repo on disk.)",
+    "removeMenu": "Remove",
+    "deleteMenu": "Delete…"
+  },
+  "identities": {
+    "title": "Identities",
+    "newIdentity": "+ New Identity",
+    "empty": "No identities yet. Click + New Identity to start.",
+    "generateKey": "Generate Key",
+    "regenerateKey": "Re-generate Key",
+    "deleteConfirm": "Delete this identity?",
+    "created": "Identity created",
+    "keyGenerated": "Key generated",
+    "match": "match"
+  },
+  "identityForm": {
+    "newTitle": "New Identity",
+    "editTitle": "Edit Identity",
+    "label": "Label",
+    "userName": "User Name",
+    "userEmail": "User Email",
+    "keyPath": "Key Path",
+    "matchPath": "Match Path (for includeIf gitdir:)",
+    "matchPathPlaceholder": "~/work",
+    "hostAlias": "Host Alias",
+    "gitHost": "Git Host"
+  },
+  "keyGenerator": {
+    "title": "Generate SSH Key",
+    "keyName": "Key Name",
+    "keyType": "Key Type",
+    "keyTypeEd25519": "ED25519 (recommended)",
+    "keyTypeRsa": "RSA 4096",
+    "comment": "Comment",
+    "passphrase": "Passphrase (optional, ≥ 4 chars)",
+    "passphraseTooShort": "Passphrase must be at least 4 characters",
+    "success": "Key generated, public key copied to clipboard",
+    "publicKeyLabel": "Public Key",
+    "addToGithub": "Add this key to your GitHub account:",
+    "githubKeysLink": "github.com/settings/keys"
+  },
+  "addProject": {
+    "title": "Add Project",
+    "projectPath": "Project Path",
+    "projectPathPlaceholder": "Select a git repository folder",
+    "projectNamePreview": "Project name:",
+    "identity": "Identity",
+    "bindLater": "(bind later)",
+    "notGitRepo": "Selected directory is not a git repository",
+    "defaultHint": "Default: matches your ~/.gitconfig sshCommand"
+  },
+  "identitySwitcher": {
+    "title": "Switch Identity",
+    "empty": "No identities. Create one first."
+  },
+  "passphrase": {
+    "title": "Unlock SSH Key",
+    "passphrase": "Passphrase",
+    "wrong": "Wrong passphrase, try again"
+  },
+  "connectionTester": {
+    "title": "Test SSH Connection",
+    "titleWithLabel": "Test SSH Connection — {{label}}",
+    "testing": "Testing… (this can take up to 30s)",
+    "authenticated": "✓ Authenticated",
+    "timedOut": "⏱ Connection timed out",
+    "failed": "✗ Failed",
+    "noOutput": "(no output)"
+  },
+  "sshKeys": {
+    "title": "SSH Keys",
+    "empty": "No SSH keys found in ~/.ssh/",
+    "unlinked": "No identity linked",
+    "createIdentity": "Create identity",
+    "linkedIdentities_other": "+{{count}} more identities linked (manage in Identities view)"
+  },
+  "sshConfig": {
+    "title": "SSH Config",
+    "validate": "Validate",
+    "valid": "Config is valid",
+    "invalid": "Config has errors",
+    "empty": "~/.ssh/config is empty",
+    "managed": "managed"
+  },
+  "history": {
+    "title": "History",
+    "revert": "Revert",
+    "rollbackConfirm": "Rollback to this state? Current state will be saved first.",
+    "rolledBack": "Rolled back",
+    "empty": "No history yet"
+  },
+  "settings": {
+    "title": "Settings",
+    "tabs": {
+      "theme": "Theme",
+      "language": "Language",
+      "logs": "Logs",
+      "env": "SSH Environment",
+      "updates": "Updates"
+    },
+    "theme": {
+      "mode": "Mode",
+      "modeSystem": "Follow system",
+      "modeLight": "Light",
+      "modeDark": "Dark"
+    },
+    "language": {
+      "label": "Interface language",
+      "english": "English",
+      "chinese": "简体中文"
+    },
+    "logs": {
+      "clearTitle": "Clear all modification history (irreversible)",
+      "clearButton": "Clear History",
+      "clearConfirm": "Clear all history? This cannot be undone.",
+      "cleared": "History cleared"
+    },
+    "env": {
+      "loading": "Loading…"
+    },
+    "updates": {
+      "title": "Updates",
+      "current": "Current version",
+      "currentValue": "{{version}}",
+      "latest": "Latest version",
+      "latestValue": "{{version}}",
+      "notChecked": "Not yet checked",
+      "upToDate": "Up to date",
+      "check": "Check now",
+      "update": "Update now",
+      "notify": "Notify me when a new version is available",
+      "restartHint": "Please close and reopen the app to apply the update.",
+      "changelog": "Release Notes",
+      "loadingChangelog": "Loading release notes...",
+      "changelogLoadFailed": "Failed to load release notes.",
+      "viewLatestChangelog": "View New Version Changelog",
+      "viewCurrentChangelog": "View Current Version Changelog"
+    }
+  },
+  "scanResults": {
+    "title": "Import from system",
+    "empty": "No existing identity configurations found in ~/.gitconfig or ~/.ssh/.",
+    "fromGitconfig": "gitconfig",
+    "fromSsh": "ssh dir",
+    "conflict": "conflict",
+    "conflictLabel": "label already used",
+    "conflictKey": "key already used",
+    "import": "Import {{count}}",
+    "importing": "Importing…",
+    "scan": "Scan & Import",
+    "scanning": "Scanning…",
+    "scanSuccess_one": "Imported {{count}} identity",
+    "scanSuccess_other": "Imported {{count}} identities",
+    "scanFailed": "Scan failed: {{message}}"
+  },
+  "update": {
+    "toast": {
+      "title": "NiceSSH {{version}} is available",
+      "update": "Update now",
+      "later": "Later",
+      "progress": "Downloading… {{pct}}%",
+      "restart": "Restart to apply",
+      "failed": "Update failed"
+    }
+  }
+}

@@ -1,0 +1,220 @@
+# NiceSSH
+
+[English](README.md) · [简体中文](README.zh-CN.md)
+
+> 一个跨平台桌面 GUI,用于管理多套 SSH 密钥、Git 身份,以及仓库与账号的绑定关系。
+> 不再手写 `~/.ssh/config` 和 `~/.gitconfig`,不再用错账号推送到 GitHub。
+
+[![Release](https://img.shields.io/github/v/release/e9ab98/NiceSSH)](https://github.com/e9ab98/NiceSSH/releases)
+[![Platforms](https://img.shields.io/badge/platforms-macOS%20%7C%20Windows%20%7C%20Linux-blue)](#下载)
+[![License: MIT](https://img.shields.io/badge/license-MIT-green)](LICENSE)
+
+## 功能特性
+
+- 🔑 **SSH 密钥管理** — 列出、生成(ED25519 / RSA 4096)、删除、复制公钥
+- 👤 **Git 身份管理** — 姓名、邮箱、密钥、目录匹配(`includeIf`)
+- 📁 **项目管理** — 注册本地仓库,绑定到指定身份
+- 🪄 **目录自动匹配** — `~/work/` 下的仓库自动使用工作身份,零摩擦
+- 🔍 **可视化的 SSH 配置编辑** — 你手写的配置块按字节原样保留
+- 🧪 **SSH 连接测试** — 验证 `git push` 命中的是哪个 GitHub 账号
+- ↩️ **变更历史 + 一键回滚** — 对 `~/.ssh/config`、`~/.gitconfig` 以及应用配置的所有改动都会被快照
+- 🌗 **跟随系统的深色 / 浅色主题**
+- 🌐 **国际化** — 内置英文和简体中文,在「设置 → 语言」中切换
+- 🖥️ **原生二进制** — 基于 Tauri 2.x,体积约 5–15 MB,真正以原生应用运行
+
+## 为什么需要它
+
+如果你曾经遇到过:
+
+- 不小心用个人邮箱推到了工作 GitHub
+- 花了 30 分钟手改 `~/.ssh/config` 来添加新账号
+- 搞不清哪个 SSH 密钥对应哪个 GitHub
+- 弄坏了 `~/.gitconfig`,丢了所有 `includeIf` 规则
+- 想要一个「提交前预览」视图,看看 SSH 配置最终会变成什么样
+
+NiceSSH 就是为你准备的。
+
+## 下载
+
+在 [**Releases 页面**](https://github.com/e9ab98/NiceSSH/releases/latest) 获取最新版本对应你系统的安装包。
+
+| 平台 | 架构 | 文件 |
+|---|---|---|
+| **macOS**(推荐) | Intel + Apple Silicon(universal2) | `NiceSSH-v*-macOS-universal.dmg` |
+| macOS Intel | x86_64 | `NiceSSH-v*-darwin-x64.dmg` |
+| macOS Apple Silicon | aarch64 | `NiceSSH-v*-darwin-arm64.dmg` |
+| Windows | x86_64 | `NiceSSH-v*-windows-x64.msi` |
+| Linux | x86_64 | `NiceSSH-v*-linux-x64.AppImage` 或 `.deb` |
+
+> **提示:** 滚动构建的 "Latest" 版本(每次 `main` 分支提交都会触发)始终在 <https://github.com/e9ab98/NiceSSH/releases/tag/latest> 提供,适合测试用;稳定使用请选择带版本号的正式发布。
+
+### 安装
+
+**macOS**
+1. 双击打开 `.dmg`
+2. 把 `NiceSSH.app` 拖入 `/Applications`
+3. 首次打开:右键 → 打开(在未签名时绕过 Gatekeeper;1.0 之前)
+
+**Windows**
+1. 运行 `.msi` 安装包
+2. SmartScreen 可能会提示未签名构建的警告(1.0 之前)—— 点击「更多信息」→「仍要运行」
+
+**Linux(AppImage)**
+```bash
+chmod +x NiceSSH-v*-linux-x64.AppImage
+./NiceSSH-v*-linux-x64.AppImage
+```
+
+**Linux(.deb)**
+```bash
+sudo dpkg -i NiceSSH-v*-linux-x64.deb
+```
+
+## 首次使用流程
+
+1. **打开 NiceSSH**。应用默认进入「项目」视图(空)。
+2. 进入「身份」→ 点击「**+ 新建身份**」。
+   - 标签: `Work`
+   - 用户名: `你的名字`
+   - 邮箱: `work@company.com`
+   - 密钥路径: `~/.ssh/id_work_ed25519`(默认值)
+   - 匹配路径: `~/work`(这样 `~/work/` 下所有仓库都会自动使用该身份)
+   - 主机别名 / Git 主机: 保持 `github.com`
+3. 在新身份卡片上点击「生成密钥」→ 选择 ED25519 → 可选设置口令。
+   - 公钥会自动复制到剪贴板。
+4. 把公钥添加到你的 GitHub 账号: <https://github.com/settings/keys>
+5. 进入「项目」→ 点击「**+ 添加项目**」→ 选择 `~/work/` 下的一个 git 仓库 → 选中 `Work` 身份 → 提交。
+6. 该项目的 `.git/config` 已被设置为使用 `id_work_ed25519`,`~/.gitconfig` 也新增了 `includeIf` 块。
+7. 点击「测试 SSH」验证 GitHub 把你识别为工作账号。
+8. 推送到 GitHub —— 命中的是工作账号,而不是个人账号。
+
+再为 `~/personal/` 添加一个 Personal 身份,基本就齐活了。
+
+## 实现原理
+
+### 基于目录的自动匹配(`includeIf`)
+
+当你为身份设置了「匹配路径」(例如 `~/work`),NiceSSH 会在 `~/.gitconfig` 末尾追加:
+
+```ini
+[includeIf "gitdir:~/work/"]
+    path = ~/.gitconfig-work
+```
+
+并创建 `~/.gitconfig-work`:
+
+```ini
+[user]
+    name = 你的名字
+    email = work@company.com
+[core]
+    sshCommand = ssh -i ~/.ssh/id_work_ed25519 -o IdentitiesOnly=yes
+```
+
+Git 会自动读取该配置——无需 App 常驻进程,无需守护程序,没有额外跳数。
+
+### 单仓库覆盖
+
+如果某个项目不在你的「匹配路径」下(例如 `~/random/`),你仍然可以在「项目」视图里把它显式绑定到某个身份。这会直接写入该项目的 `.git/config`,覆盖目录级的 `includeIf`。
+
+### SSH 配置的保留策略
+
+NiceSSH 只修改由它自己管理的块,以 `# nicessh-managed` 标记。你手写的块(`Host db-prod`、`Host *` 等)按字节原样保留——只追加新块,绝不覆盖你的文件。
+
+### 变更历史与回滚
+
+对 `~/.ssh/config`、`~/.gitconfig`、`~/.gitconfig-<label>` 以及 `~/.nicessh/config.json` 的每次写入都会快照到 `~/.nicessh/history/`(保留最近 50 条)。打开「历史」视图,选中任意条目,点击「回滚」—— 当前状态会自动先保存一次,再恢复到你选中的版本。
+
+## 开发
+
+NiceSSH 是 [Tauri 2.x](https://tauri.app/) 应用:Rust 后端 + React 18 + TypeScript + Vite 前端。
+
+### 环境要求
+
+- **Node.js 20+** 和 **pnpm 9+**
+- **Rust 1.78+**(`rustup install stable`)
+- **Tauri 2 的系统依赖** —— 参考 <https://tauri.app/start/prerequisites/>
+
+### 本地搭建
+
+```bash
+git clone https://github.com/e9ab98/NiceSSH.git
+cd NiceSSH
+pnpm install
+cargo install tauri-cli --version "^2.0" --locked
+cargo tauri dev
+```
+
+首次 `cargo build` 会拉取约 1000 个 crate,耗时 5–10 分钟。之后的构建会很快。
+
+### 运行测试
+
+```bash
+cd src-tauri
+cargo test                          # Rust 单元测试
+cargo clippy --all-targets -- -D warnings   # Lint(必须通过)
+```
+
+### 为当前平台打包
+
+```bash
+cargo tauri build
+# → 产出 src-tauri/target/release/bundle/{dmg,msi,appimage,deb}/NiceSSH*
+```
+
+### 项目结构
+
+```
+.
+├── package.json              # 前端依赖
+├── vite.config.ts            # Vite 构建配置
+├── tailwind.config.ts        # Tailwind,使用 data-theme="dark" 选择器
+├── index.html                # 防主题闪烁的内联脚本
+├── src/                      # React 前端
+│   ├── main.tsx
+│   ├── App.tsx               # 侧边栏 + 6 个路由
+│   ├── components/
+│   ├── views/                # 项目 / 身份 / SSH 密钥 / 配置 / 历史 / 设置
+│   ├── store/                # Zustand
+│   ├── ipc/                  # 类型化的 Tauri 命令封装
+│   ├── i18n/                 # 英文 / 简体中文翻译文件
+│   └── hooks/
+└── src-tauri/                # Rust 后端
+    ├── Cargo.toml
+    ├── tauri.conf.json
+    ├── capabilities/
+    └── src/
+        ├── main.rs
+        ├── lib.rs            # Tauri 构建器 + IPC 命令注册
+        ├── paths.rs          # ~/ 展开、文件路径解析
+        ├── fs_safety.rs      # atomic_write(tmp + rename + chmod)
+        ├── history.rs        # 50 条快照索引 + 回滚
+        ├── config_store.rs   # ~/.nicessh/config.json
+        ├── ssh_config.rs     # 解析 + 序列化(保留用户块)
+        ├── git_config.rs     # includeIf 追加 + 每身份子文件
+        ├── ssh_keys.rs       # 列出 + 删除
+        ├── runner.rs         # 带 30s 超时的 exec
+        └── commands/         # 23 个 #[tauri::command] 处理函数
+```
+
+### 添加翻译
+
+字符串集中在 `src/i18n/locales/{en,zh-CN}.json`。新增 key 时请同时编辑两个文件。组件通过 `useTranslation()` 钩子读取当前语言(在「设置 → 语言」中选择)。要新增语言,只需添加一份 JSON 文件并在 `src/i18n/index.ts` 中注册即可。
+
+## 安全与数据处理
+
+- **无网络请求**,除非你显式触发(例如 SSH 连接测试)。
+- **所有文件系统写入** 都经过 `atomic_write`(临时文件 + rename),即使中途崩溃也不会留下半写状态。
+- **口令永不入盘**。它仅保存在解锁对话框的 React state 中,调用 `ssh-add` 一次后即丢弃。
+- **SSH 私钥** 仅被应用**读取**(用于计算指纹),不会复制或外发。
+- `~/.nicessh/` 目录及其 `history/` 子目录只包含元数据 + 公开配置文件的 before/after diff。**私钥材料永远不会进入任何快照**。
+
+## 当前限制(MVP)
+
+- **无内置终端。** NiceSSH 不替代你的 shell,只是它的补充:在 GUI 里编辑身份 / 项目,然后照常用命令行执行 `git`。
+- **无 commit / push / pull 界面。** 应用只读展示最近 10 次提交,用于「push 之前确认这就是正确的身份」。真正的 push 仍然在你的终端完成。
+- **0.1.0 没有代码签名 / 公证。** macOS Gatekeeper 和 Windows SmartScreen 会显示警告。v1.0.0 计划见 [CHANGELOG.md](CHANGELOG.md)。
+
+## 许可证
+
+[MIT](LICENSE) — 全文见 LICENSE 文件。

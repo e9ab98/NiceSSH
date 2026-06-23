@@ -1,0 +1,43 @@
+name: Notify
+
+on:
+  workflow_run:
+    workflows: ["Build & Publish Release"]
+    types: [completed]
+
+jobs:
+  bark-notification:
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Send Bark Notification
+        env:
+          BARK_KEY: ${{ secrets.BarkKey }}
+          CONCLUSION: ${{ github.event.workflow_run.conclusion }}
+          RUN_ID: ${{ github.event.workflow_run.id }}
+          REPO: ${{ github.repository }}
+        run: |
+          if [ -z "$BARK_KEY" ]; then
+            echo "BarkKey secret is empty. Skipping notification."
+            exit 0
+          fi
+
+          if [ "$CONCLUSION" = "success" ]; then
+            TITLE="NiceSSH 编译成功 🎉"
+            BODY="新版本已发布！点击可前往 Actions 查看详细记录。"
+            SOUND="glass"
+          else
+            TITLE="NiceSSH 编译失败 ❌"
+            BODY="请尽快点击前往 Actions 查看构建日志。"
+            SOUND="sad"
+          fi
+
+          # Using Bark's POST API for clean JSON payload (avoids shell URL-encoding issues with Chinese characters and spaces)
+          curl -fsSL -X POST "https://api.day.app/${BARK_KEY}" \
+            -H "Content-Type: application/json" \
+            -d "{
+              \"title\": \"${TITLE}\",
+              \"body\": \"${BODY}\",
+              \"sound\": \"${SOUND}\",
+              \"group\": \"NiceSSH\",
+              \"url\": \"https://github.com/${REPO}/actions/runs/${RUN_ID}\"
+            }"
