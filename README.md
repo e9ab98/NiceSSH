@@ -266,7 +266,16 @@ The very first in-app update path runs on **v0.3.0 → v0.3.1**: v0.3.0 ships th
   manager is invoked under the hood). The `.AppImage` build is the
   recommended channel for auto-update on Linux — it updates in place
   without root.
-- **Manual restart**: After a successful download, NiceSSH asks you to
+- **Verifying the signing pair locally** (catches a wrong password in ~5s, before a 4-minute native compile):
+
+```bash
+./scripts/check-signer.sh --key ~/path/to/nicessh.key --password ~/path/to/nicessh.pwd
+# or, in CI style:
+export TAURI_SIGNING_PRIVATE_KEY=... TAURI_SIGNING_PRIVATE_KEY_PASSWORD=...
+./scripts/check-signer.sh --from-env
+```
+
+**Manual restart**: After a successful download, NiceSSH asks you to
   close and reopen the app to apply the update. (A one-click
   in-process relaunch via `@tauri-apps/plugin-process` is planned for
   a follow-up release; the manual close-and-reopen flow is identical
