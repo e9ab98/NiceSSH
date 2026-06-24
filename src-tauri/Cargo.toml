@@ -1,6 +1,6 @@
 [package]
 name = "nicessh"
-version = "0.3.15"
+version = "0.3.16"
 description = "Cross-platform GUI for managing multiple SSH keys and Git identities"
 authors = ["NiceSSH Contributors"]
 license = "MIT"
