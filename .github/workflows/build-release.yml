@@ -405,11 +405,13 @@ jobs:
           files: |
             artifacts/**/*.dmg
             artifacts/**/*.msi
-            artifacts/**/*.exe
             artifacts/**/*.AppImage
-            artifacts/**/*.deb
             artifacts/**/*.sig
             artifacts/latest.json
+            # artifacts/**/*.deb is intentionally omitted: the linux-deb job
+            # uses `continue-on-error: true` and `if-no-files-found: warn`,
+            # so the .deb artifact is not reliably present at release time.
+            # Re-add this line if/when linux-deb is promoted to a required job.
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
 
