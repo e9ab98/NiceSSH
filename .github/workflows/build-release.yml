@@ -117,6 +117,10 @@ jobs:
           if-no-files-found: ignore
           path: build.log
 
+      - name: List macOS bundle outputs
+        if: runner.os == 'macOS'
+        run: ls -la src-tauri/target/${{ matrix.target }}/release/bundle/macos/
+
       - name: Upload bundle artifact
         if: success()
         uses: actions/upload-artifact@v4
@@ -129,152 +133,10 @@ jobs:
             src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.tar.gz*
 
   # ---------------------------------------------------------------------------
-  # macOS universal2 — only on tag/dispatch; failure does NOT block the
-  # release job. The release will still ship the per-arch DMGs.
-  # ---------------------------------------------------------------------------
-  macos-universal:
-    name: Build (darwin-universal)
-    needs: build
-    if: |
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.name == 'Tag' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main') ||
-      github.event_name == 'workflow_dispatch'
-    runs-on: macos-14
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Build frontend
-        run: pnpm install --frozen-lockfile && pnpm build
-
-      - name: Build Tauri universal2
-        run: |
-          set -o pipefail
-          pnpm tauri build --target universal-apple-darwin 2>&1 | tee build-universal.log
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: NiceSSH-darwin-universal-log
-          if-no-files-found: ignore
-          path: build-universal.log
-
-      - name: Upload universal2 bundle artifacts
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: NiceSSH-darwin-universal
-          if-no-files-found: warn
-          path: |
-            src-tauri/target/universal-apple-darwin/release/bundle/dmg/*.dmg
-            src-tauri/target/universal-apple-darwin/release/bundle/macos/*.tar.gz*
-            src-tauri/target/universal-apple-darwin/release/bundle/updater/**
-
-  # ---------------------------------------------------------------------------
-  # Linux .deb (extra, separate from AppImage which Tauri produces) — same
-  # non-blocking treatment: failure does not block the release.
-  # ---------------------------------------------------------------------------
-  linux-deb:
-    name: Build (linux-deb)
-    needs: build
-    if: |
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.name == 'Tag' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main') ||
-      github.event_name == 'workflow_dispatch'
-    runs-on: ubuntu-22.04
-    continue-on-error: true
-    steps:
-      - uses: actions/checkout@v5
-
-      - name: Install Rust toolchain
-        uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: x86_64-unknown-linux-gnu
-
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
-
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
-
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install Linux build deps
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev \
-            file \
-            dpkg
-
-      - name: Build frontend
-        run: pnpm install --frozen-lockfile && pnpm build
-
-      - name: Build Tauri .deb
-        run: |
-          set -o pipefail
-          pnpm tauri build --target x86_64-unknown-linux-gnu --bundles deb 2>&1 | tee build-deb.log
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: NiceSSH-linux-x64-deb-log
-          if-no-files-found: ignore
-          path: build-deb.log
-
-      - name: Upload .deb
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: NiceSSH-linux-x64-deb
-          if-no-files-found: warn
-          path: src-tauri/target/x86_64-unknown-linux-gnu/release/bundle/deb/*
-
-  # ---------------------------------------------------------------------------
   # Final: collect all artifacts and publish GitHub Release.
-  # Only depends on the per-platform matrix `build` job — `macos-universal`
-  # and `linux-deb` are best-effort (continue-on-error above).
+  # Only depends on the per-platform matrix `build` job. There are no
+  # best-effort side jobs anymore — a failure on any platform blocks
+  # the release and rolls the tag back.
   # ---------------------------------------------------------------------------
   release:
     name: Publish GitHub Release

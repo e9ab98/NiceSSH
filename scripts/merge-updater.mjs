@@ -26,14 +26,49 @@ console.log("All .json files:", allFiles.filter(f => f.name.endsWith(".json")).m
 console.log("Files in any bundle/updater/ subtree:",
   allFiles.filter(f => f.path.includes("bundle/updater")).map(f => f.path));
 
+// Debug: list mac bundle and updater subtrees so the next failure
+// tells us immediately whether Tauri's --bundles dmg,app produced
+// the .app.tar.gz and the corresponding updater JSON.
+function listSubtree(label) {
+  const root = path.join(artifactsDir, label);
+  if (!fs.existsSync(root)) return [`(missing) ${root}`];
+  const out = [];
+  (function walk(d) {
+    for (const e of fs.readdirSync(d, { withFileTypes: true })) {
+      const p = path.join(d, e.name);
+      if (e.isDirectory()) walk(p);
+      else out.push(p);
+    }
+  })(root);
+  return out;
+}
+console.log("darwin-arm64 macos subtree:",
+  listSubtree("NiceSSH-darwin-arm64/bundle/macos"));
+console.log("darwin-arm64 updater subtree:",
+  listSubtree("NiceSSH-darwin-arm64/bundle/updater"));
+console.log("darwin-x64 macos subtree:",
+  listSubtree("NiceSSH-darwin-x64/bundle/macos"));
+
 // ---------- 2. Map platform -> bundle filename ----------
 const platformFiles = {};
 for (const f of allFiles) {
   const n = f.name;
   if (n.endsWith(".sig")) continue;
   if (n.endsWith(".app.tar.gz")) {
-    if (/aarch64|arm64/.test(n)) platformFiles["darwin-aarch64"] = n;
-    else if (/x64|x86_64/.test(n)) platformFiles["darwin-x86_64"] = n;
+    // Tauri's macOS app bundle is named <productName>.app.tar.gz with no
+    // arch suffix. The arch is recoverable by walking up the directory
+    // tree: <artifact>/bundle/macos/ for actions/download-artifact layout
+    // (artifact name "NiceSSH-darwin-arm64" sits 2 levels up) and
+    // bundle/updater/<target-triple>/ (e.g. "aarch64-apple-darwin" sits
+    // 1 level up). We test any ancestor segment; the strict darwin-*
+    // and *-apple-darwin patterns avoid matching linux/windows
+    // target-triple segments like x86_64-unknown-linux-gnu.
+    const pathBlob = " " + f.path.split(path.sep).join(" ") + " ";
+    if (/ NiceSSH-darwin-arm64 | aarch64-apple-darwin /.test(pathBlob)) {
+      platformFiles["darwin-aarch64"] = n;
+    } else if (/ NiceSSH-darwin-x64 | x86_64-apple-darwin /.test(pathBlob)) {
+      platformFiles["darwin-x86_64"] = n;
+    }
   } else if (n.endsWith(".msi")) {
     if (/x64|x86_64|setup/.test(n)) platformFiles["windows-x86_64"] = n;
   } else if (n.endsWith(".AppImage")) {
@@ -115,6 +150,22 @@ if (updaterJsonFiles.length === 0) {
   fs.writeFileSync(latestJsonPath, JSON.stringify(mergedFallback, null, 2) + "\n", "utf8");
   console.log("Wrote", latestJsonPath);
   console.log("Fallback latest.json:", JSON.stringify(mergedFallback, null, 2));
+
+  const REQUIRED_PLATFORMS = [
+    "darwin-aarch64",
+    "darwin-x86_64",
+    "windows-x86_64",
+    "linux-x86_64",
+  ];
+  const missingPlatforms = REQUIRED_PLATFORMS.filter(
+    (p) => !mergedFallback.platforms[p]
+  );
+  if (missingPlatforms.length) {
+    console.error(
+      `FATAL: latest.json (fallback path) is missing required platforms: ${missingPlatforms.join(", ")}.`
+    );
+    process.exit(1);
+  }
   process.exit(0);
 }
 
@@ -128,24 +179,39 @@ for (const f of allFiles) {
 }
 
 // ---------- 5. Map JSON file -> platform key ----------
+// Walk the path from the deepest segment to the shallowest, looking for
+// an arch hint. This handles the v2 layout
+// (artifact/bundle/updater/<target-triple>/<bundle>.<ext>.json) as well
+// as the v1 layout (artifact/bundle/<bundle>.<ext>.json with no triple).
+function detectPlatformFromPath(p) {
+  const pathBlob = " " + p.split(path.sep).join(" ") + " ";
+  // Strict darwin patterns first to avoid clashing with linux/windows
+  // target triples (which also contain "x86_64").
+  if (/ NiceSSH-darwin-arm64 | aarch64-apple-darwin /.test(pathBlob)) {
+    return "darwin-aarch64";
+  }
+  if (/ NiceSSH-darwin-x64 | x86_64-apple-darwin /.test(pathBlob)) {
+    return "darwin-x86_64";
+  }
+  if (/ NiceSSH-windows-x64 | x86_64-pc-windows-msvc /.test(pathBlob)) {
+    return "windows-x86_64";
+  }
+  if (/ NiceSSH-linux-x64 | x86_64-unknown-linux-gnu /.test(pathBlob)) {
+    return "linux-x86_64";
+  }
+  // Tauri v1 fallback: parent dir uses target triple only.
+  const parent = path.basename(path.dirname(p));
+  if (/aarch64|arm64/.test(parent)) return "darwin-aarch64";
+  if (/darwin|apple-darwin/.test(parent)) return "darwin-x86_64";
+  if (/x86_64|amd64|linux/.test(parent)) return "linux-x86_64";
+  if (/windows|msvc|pc-windows/.test(parent)) return "windows-x86_64";
+  return null;
+}
+
 const jsonToPlatform = {};
 for (const jp of updaterJsonFiles) {
-  const base = path.basename(jp, ".json");
-  let matched = false;
-  for (const [platform, fname] of Object.entries(platformFiles)) {
-    if (fname === base) {
-      jsonToPlatform[jp] = platform;
-      matched = true;
-      break;
-    }
-  }
-  if (matched) continue;
-  // Fallback: look at parent dir for target triple
-  const parent = path.basename(path.dirname(jp));
-  if (/aarch64|arm64/.test(parent)) jsonToPlatform[jp] = "darwin-aarch64";
-  else if (/darwin|apple-darwin/.test(parent)) jsonToPlatform[jp] = "darwin-x86_64";
-  else if (/x86_64|amd64|linux/.test(parent)) jsonToPlatform[jp] = "linux-x86_64";
-  else if (/windows|msvc|pc-windows/.test(parent)) jsonToPlatform[jp] = "windows-x86_64";
+  const platform = detectPlatformFromPath(jp);
+  if (platform) jsonToPlatform[jp] = platform;
 }
 console.log("JSON -> platform mapping:", jsonToPlatform);
 
@@ -193,3 +259,23 @@ for (const platform of Object.keys(merged.platforms)) {
 fs.writeFileSync(latestJsonPath, JSON.stringify(merged, null, 2) + "\n", "utf8");
 console.log("Wrote", latestJsonPath);
 console.log("Merged latest.json:", JSON.stringify(merged, null, 2));
+
+const REQUIRED_PLATFORMS = [
+  "darwin-aarch64",
+  "darwin-x86_64",
+  "windows-x86_64",
+  "linux-x86_64",
+];
+const missingPlatforms = REQUIRED_PLATFORMS.filter(
+  (p) =>
+    !merged.platforms[p] ||
+    !merged.platforms[p].url ||
+    !merged.platforms[p].signature
+);
+if (missingPlatforms.length) {
+  console.error(
+    `FATAL: latest.json is missing required platforms: ${missingPlatforms.join(", ")}. ` +
+      `Refusing to publish a partial updater manifest.`
+  );
+  process.exit(1);
+}

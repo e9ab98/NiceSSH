@@ -20,14 +20,24 @@ jobs:
         with:
           fetch-depth: 0
 
-      - name: Bump last segment with commit count and tag
+      - name: Bump last segment and tag (lastTag.patch + 1)
         id: bump
-        env:
-          COMMITS: ${{ github.event.workflow_run.head_sha != '' && github.event.workflow_run.head_sha || github.sha }}
         run: |
           set -euo pipefail
-          COMMITS=$(git rev-list --count HEAD)
-          VERSION="0.3.${COMMITS}"
+          git fetch --tags --force
+          LAST_TAG=$(git tag -l "v0.3.*" --sort=-v:refname | head -1)
+          if [ -z "$LAST_TAG" ]; then
+            NEXT_PATCH=0
+            echo "No existing v0.3.* tag found; bootstrapping at 0.3.${NEXT_PATCH}"
+          else
+            LAST_PATCH="${LAST_TAG#v0.3.}"
+            if ! [[ "$LAST_PATCH" =~ ^[0-9]+$ ]]; then
+              echo "::error::Last tag ${LAST_TAG} is not a plain patch number; refusing to bump."
+              exit 1
+            fi
+            NEXT_PATCH=$((LAST_PATCH + 1))
+          fi
+          VERSION="0.3.${NEXT_PATCH}"
           TAG="v${VERSION}"
           echo "Computed tag: ${TAG}"
           echo "version=${VERSION}" >> "$GITHUB_OUTPUT"
