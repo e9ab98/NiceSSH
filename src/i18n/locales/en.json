@@ -8,7 +8,12 @@
     "sshKeys": "SSH Keys",
     "sshConfig": "SSH Config",
     "history": "History",
-    "settings": "Settings"
+    "settings": "Settings",
+    "group": {
+      "ssh": "SSH",
+      "git": "Git",
+      "app": "App"
+    }
   },
   "common": {
     "save": "Save",
@@ -53,7 +58,35 @@
     "removed": "Project removed",
     "deleteConfirm": "Permanently delete this project from NiceSSH? (This does not affect the repo on disk.)",
     "removeMenu": "Remove",
-    "deleteMenu": "Delete…"
+    "deleteMenu": "Delete…",
+    "stat": {
+      "total": "Projects",
+      "bound": "Bound",
+      "unbound": "Unbound",
+      "errors": "Errors"
+    },
+    "badge": {
+      "bound": "bound",
+      "unbound": "no identity",
+      "untracked": "untracked"
+    },
+    "detail": {
+      "identity": "Git Identity",
+      "name": "Name",
+      "email": "Email",
+      "key": "Key",
+      "noIdentity": "No identity bound",
+      "gitConfig": "Git Config",
+      "userName": "user.name",
+      "userEmail": "user.email",
+      "sshKey": "sshKey",
+      "empty": "Select a project to view details"
+    },
+    "action": {
+      "switch": "Switch identity",
+      "test": "Test connection"
+    },
+    "empty": "No projects yet. Add a repo to get started."
   },
   "identities": {
     "title": "Identities",

@@ -8,7 +8,12 @@
     "sshKeys": "SSH 密钥",
     "sshConfig": "SSH 配置",
     "history": "历史",
-    "settings": "设置"
+    "settings": "设置",
+    "group": {
+      "ssh": "SSH",
+      "git": "Git",
+      "app": "应用"
+    }
   },
   "common": {
     "save": "保存",
@@ -53,7 +58,35 @@
     "removed": "项目已移除",
     "deleteConfirm": "彻底删除该 NiceSSH 项目记录？（不会影响磁盘上的仓库本身）",
     "removeMenu": "移除",
-    "deleteMenu": "删除…"
+    "deleteMenu": "删除…",
+    "stat": {
+      "total": "项目总数",
+      "bound": "已绑定",
+      "unbound": "未绑定",
+      "errors": "异常"
+    },
+    "badge": {
+      "bound": "已绑定",
+      "unbound": "无身份",
+      "untracked": "未追踪"
+    },
+    "detail": {
+      "identity": "Git 身份",
+      "name": "名称",
+      "email": "邮箱",
+      "key": "密钥",
+      "noIdentity": "未绑定身份",
+      "gitConfig": "Git 配置",
+      "userName": "user.name",
+      "userEmail": "user.email",
+      "sshKey": "sshKey",
+      "empty": "选择一个项目查看详情"
+    },
+    "action": {
+      "switch": "切换身份",
+      "test": "测试连接"
+    },
+    "empty": "暂无项目。添加一个仓库开始使用。"
   },
   "identities": {
     "title": "身份",

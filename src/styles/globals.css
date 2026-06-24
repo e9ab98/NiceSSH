@@ -2,30 +2,137 @@
 @tailwind components;
 @tailwind utilities;
 
-:root[data-theme="dark"] {
-  --bg-0: #0d1117; --bg-1: #161b22; --bg-2: #1c2128;
-  --border: #30363d; --border-strong: #444c56;
-  --text-0: #e6edf3; --text-1: #9aa3b2; --text-2: #6e7681;
-  --accent: #58a6ff; --accent-hover: #79b8ff;
-  --success: #3fb950; --warning: #d29922; --danger: #f85169;
+:root {
+  --font-ui: -apple-system, BlinkMacSystemFont, "SF Pro Text", "SF Pro Display", "Segoe UI", sans-serif;
+  --font-mono: "SFMono-Regular", "SF Mono", ui-monospace, Menlo, Monaco, Consolas, "Liberation Mono", monospace;
+
+  --bg-0: #ffffff;
+  --bg-1: #f8fafc;
+  --bg-2: #eef2f7;
+  --body-bg: #f6f8fb;
+  --shell-top: #ffffff;
+  --shell-mid: #f8fafc;
+  --shell-bottom: #eef2f7;
+
+  --ink: #0f172a;
+  --text-0: #0f172a;
+  --text-1: #64748b;
+  --text-2: #94a3b8;
+
+  --border: rgba(15, 23, 42, 0.12);
+  --border-strong: rgba(15, 23, 42, 0.18);
+  --line: var(--border);
+  --line-strong: var(--border-strong);
+
+  --brand: #2563eb;
+  --brand-strong: #1d4ed8;
+  --brand-soft: rgba(37, 99, 235, 0.1);
+  --brand-hot: #f59e0b;
+  --accent: var(--brand);
+  --accent-hover: #1d4ed8;
+  --success: #22c55e;
+  --warning: #f59e0b;
+  --danger: #ef4444;
+  --info: #3b82f6;
+
+  --card: #ffffff;
+  --panel-bg: #ffffff;
+  --panel-shadow: 0 16px 32px rgba(15, 23, 42, 0.06), inset 0 1px rgba(255, 255, 255, 0.92);
+  --button-shadow: 0 1px 2px rgba(15, 23, 42, 0.06), inset 0 1px rgba(255, 255, 255, 0.9);
+  --button-hover-shadow: 0 8px 18px rgba(15, 23, 42, 0.09), inset 0 1px rgba(255, 255, 255, 0.92);
+  --ambient-line: rgba(15, 23, 42, 0.04);
+  --overlay-scrim: rgba(15, 23, 42, 0.36);
 }
-:root[data-theme="light"] {
-  --bg-0: #ffffff; --bg-1: #f6f8fa; --bg-2: #eaeef2;
-  --border: #d0d7de; --border-strong: #afb8c1;
-  --text-0: #1f2328; --text-1: #656d76; --text-2: #848d97;
-  --accent: #0969da; --accent-hover: #218bff;
-  --success: #1a7f37; --warning: #9a6700; --danger: #d1242f;
+
+:root[data-theme="dark"] {
+  --bg-0: #0b1120;
+  --bg-1: #111827;
+  --bg-2: #1e293b;
+  --body-bg: #0b1120;
+  --shell-top: #0b1120;
+  --shell-mid: #0f172a;
+  --shell-bottom: #111827;
+
+  --ink: #e5edf7;
+  --text-0: #e5edf7;
+  --text-1: #94a3b8;
+  --text-2: #64748b;
+
+  --border: rgba(226, 232, 240, 0.12);
+  --border-strong: rgba(226, 232, 240, 0.2);
+
+  --brand: #60a5fa;
+  --brand-strong: #93c5fd;
+  --brand-soft: rgba(96, 165, 250, 0.14);
+  --brand-hot: #fbbf24;
+  --accent: #60a5fa;
+  --accent-hover: #93c5fd;
+  --success: #4ade80;
+  --warning: #fbbf24;
+  --danger: #fb7185;
+  --info: #60a5fa;
+
+  --panel-shadow: 0 20px 42px rgba(0, 0, 0, 0.32), inset 0 1px rgba(255, 255, 255, 0.06);
+  --button-shadow: 0 1px 2px rgba(0, 0, 0, 0.28), inset 0 1px rgba(255, 255, 255, 0.08);
+  --button-hover-shadow: 0 12px 24px rgba(0, 0, 0, 0.32), inset 0 1px rgba(255, 255, 255, 0.12);
+  --ambient-line: rgba(226, 232, 240, 0.05);
+  --overlay-scrim: rgba(2, 6, 23, 0.68);
 }
 
 html, body, #root {
   height: 100%;
   margin: 0;
 }
+
 body {
-  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', 'Inter', sans-serif;
-  font-size: 13px;
-  background: var(--bg-0);
+  font-family: var(--font-ui);
+  font-size: 14px;
+  line-height: 1.45;
+  background: var(--body-bg);
   color: var(--text-0);
   -webkit-font-smoothing: antialiased;
+  -moz-osx-font-smoothing: grayscale;
+  overflow: hidden;
+  transition: background 220ms ease, color 220ms ease;
 }
-* { box-sizing: border-box; }
+
+* { box-sizing: border-box; letter-spacing: 0 !important; }
+
+/* Ambient shell container */
+.shell {
+  height: 100vh;
+  background:
+    linear-gradient(180deg, var(--shell-top) 0%, var(--shell-mid) 48%, var(--shell-bottom) 100%),
+    var(--body-bg);
+  position: relative;
+  overflow: hidden;
+  transition: background 220ms ease, color 220ms ease;
+}
+
+.ambient {
+  position: fixed;
+  inset: 0;
+  pointer-events: none;
+  z-index: 0;
+  opacity: 0.55;
+  background-image:
+    linear-gradient(var(--ambient-line) 1px, transparent 1px),
+    linear-gradient(90deg, var(--ambient-line) 1px, transparent 1px);
+  background-size: 42px 42px;
+  -webkit-mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.6), transparent 72%);
+  mask-image: linear-gradient(180deg, rgba(0, 0, 0, 0.6), transparent 72%);
+}
+
+/* Animations */
+@keyframes riseIn {
+  from { opacity: 0; transform: translateY(8px) scale(0.98); }
+  to   { opacity: 1; transform: translateY(0) scale(1); }
+}
+
+@keyframes fadeIn {
+  from { opacity: 0; }
+  to   { opacity: 1; }
+}
+
+.anim-rise { animation: riseIn 220ms ease both; }
+.anim-fade { animation: fadeIn 160ms ease both; }

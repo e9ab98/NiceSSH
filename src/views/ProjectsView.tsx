@@ -1,7 +1,7 @@
-import { useEffect, useState } from 'react';
+import { useEffect, useMemo, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { open as openDirDialog } from '@tauri-apps/plugin-dialog';
-import { Card } from '../components/ui/card';
+import { CircleSlash, AlertTriangle, FolderGit2, UserCircle2, MousePointer, type LucideIcon } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip';
@@ -15,6 +15,7 @@ import { PassphraseDialog } from '../features/passphraseDialog/PassphraseDialog'
 import { ConnectionTesterDialog } from '../features/connectionTester/ConnectionTesterDialog';
 import { ContextMenu } from '../components/ContextMenu';
 import { toast } from 'sonner';
+import { cn } from '../lib/utils';
 import type { Identity } from '../ipc/identities';
 
 type DetectedIdentity =
@@ -43,6 +44,29 @@ function deriveName(p: string): string {
   const trimmed = p.replace(/[\\/]+$/, '');
   const seg = trimmed.split(/[\\/]/).pop();
   return seg && seg.length > 0 ? seg : trimmed;
+}
+
+type Tone = 'brand' | 'success' | 'warning' | 'danger';
+
+const toneStyles: Record<Tone, string> = {
+  brand: 'bg-brand-soft text-brand-strong [[data-theme=dark]_&]:text-[#93c5fd]',
+  success: 'bg-[rgba(34,197,94,0.1)] text-[#16a34a] [[data-theme=dark]_&]:text-[#86efac]',
+  warning: 'bg-[rgba(245,158,11,0.12)] text-[#b45309] [[data-theme=dark]_&]:text-[#fcd34d]',
+  danger: 'bg-[rgba(239,68,68,0.1)] text-[#dc2626] [[data-theme=dark]_&]:text-[#fca5a5]',
+};
+
+function StatCard({ icon: Icon, tone, value, label }: { icon: LucideIcon; tone: Tone; value: number; label: string }) {
+  return (
+    <div className="rounded-2xl border border-border bg-bg-1 shadow-card p-4 flex items-center gap-3">
+      <div className={cn('h-10 w-10 shrink-0 rounded-xl flex items-center justify-center', toneStyles[tone])}>
+        <Icon className="h-5 w-5" />
+      </div>
+      <div className="min-w-0">
+        <div className="text-2xl font-extrabold text-text-0 leading-tight">{value}</div>
+        <div className="text-xs text-text-1 font-semibold truncate">{label}</div>
+      </div>
+    </div>
+  );
 }
 
 export function ProjectsView() {
@@ -95,22 +119,32 @@ export function ProjectsView() {
   const identity = detected.kind === 'tracked' ? detected.identity : null;
   const pendingIdentity = identities.find((i) => i.id === pendingIdentityId) ?? null;
 
-  // Default identity: match the global gitconfig key path against our
-  // identities. Fallback: nothing (no auto-bind).
+  // Stats: derived from projects + identities + repoConfigs
+  const stats = useMemo(() => {
+    let bound = 0, unbound = 0, errors = 0;
+    for (const p of projects) {
+      const cfg = repoConfigs[p.id];
+      const d = detectIdentity(p, identities, cfg ?? null);
+      if (d.kind === 'tracked') bound++;
+      else unbound++;
+    }
+    // errors: projects whose getRepoGitConfig returned hasConfig=false (loaded as fallback)
+    errors = Object.values(repoConfigs).filter((c) => c && !c.hasConfig).length;
+    return { total: projects.length, bound, unbound, errors };
+  }, [projects, identities, repoConfigs]);
+
   const defaultIdentityId = (() => {
     if (!globalGit?.sshKeyPath) return null;
     const match = identities.find((i) => i.keyPath === globalGit.sshKeyPath);
     return match?.id ?? null;
   })();
 
-  // One-click "Add Project": open system dir picker, validate git repo,
-  // write to config.json, and apply the default identity if any.
   const handleAdd = async () => {
     if (adding) return;
     setAdding(true);
     try {
       const picked = await openDirDialog({ directory: true, multiple: false });
-      if (typeof picked !== 'string') return; // user cancelled
+      if (typeof picked !== 'string') return;
       if (!(await isGitRepo(picked))) {
         toast.error(t('addProject.notGitRepo'));
         return;
@@ -151,8 +185,6 @@ export function ProjectsView() {
     if (!target) return;
     if (!recentlyUnlocked[target.keyPath]) {
       setSwitcherOpen(false);
-      // For unencrypted keys, add to agent without prompting — ssh-add
-      // accepts them outright with no passphrase.
       const encrypted = await isKeyEncrypted(target.keyPath);
       if (!encrypted) {
         const ok = await tryUnlockKey(target.keyPath, '');
@@ -208,56 +240,87 @@ export function ProjectsView() {
 
   return (
     <TooltipProvider>
-      <div className="flex h-full">
-        {/* Left tree */}
-        <div className="w-64 border-r border-border bg-bg-1 p-3 overflow-y-auto shrink-0">
-          <Button onClick={handleAdd} disabled={adding} className="w-full mb-3">
-            {adding ? t('common.adding') : t('projects.addProject')}
-          </Button>
-          {projects.map((p) => {
-            const d = detectIdentity(p, identities, repoConfigs[p.id] ?? null);
-            return (
-              <button
-                key={p.id}
-                onClick={() => setSelectedId(p.id)}
-                onContextMenu={(e) => {
-                  e.preventDefault();
-                  setContextMenu({ x: e.clientX, y: e.clientY, projectId: p.id, projectName: p.name });
-                }}
-                className={`w-full text-left p-2 rounded-md mb-1 ${
-                  p.id === selectedId ? 'bg-bg-2 text-text-0' : 'text-text-1 hover:bg-bg-2'
-                }`}
-              >
-                <div className="flex items-center gap-2">
-                  <div className="text-sm font-medium truncate flex-1">{p.name}</div>
-                  {d.kind === 'tracked' && <span className="w-1.5 h-1.5 rounded-full bg-accent shrink-0" aria-label="identity bound" />}
-                  {d.kind === 'untracked' && <span className="w-1.5 h-1.5 rounded-full bg-warning shrink-0" aria-label="untracked key" />}
-                </div>
-                <Tooltip>
-                  <TooltipTrigger asChild>
-                    <div className="text-xs text-text-2 truncate font-mono">{p.path}</div>
-                  </TooltipTrigger>
-                  <TooltipContent>{p.path}</TooltipContent>
-                </Tooltip>
-              </button>
-            );
-          })}
+      <div className="h-full p-4 flex flex-col gap-4">
+        {/* Top: 4 stat cards */}
+        <div className="grid grid-cols-4 gap-3">
+          <StatCard icon={FolderGit2} tone="brand" value={stats.total} label={t('projects.stat.total')} />
+          <StatCard icon={UserCircle2} tone="success" value={stats.bound} label={t('projects.stat.bound')} />
+          <StatCard icon={CircleSlash} tone="warning" value={stats.unbound} label={t('projects.stat.unbound')} />
+          <StatCard icon={AlertTriangle} tone="danger" value={stats.errors} label={t('projects.stat.errors')} />
         </div>
 
-        {/* Main panel */}
-        <div className="flex-1 p-6 overflow-y-auto">
-          {!selected ? (
-            <div className="text-text-1">{t('projects.selectPrompt')}</div>
-          ) : (
-            <ProjectDetail
-              project={selected}
-              detected={detected}
-              hasIdentities={identities.length > 0}
-              repoConfig={repoConfig}
-              onSwitch={() => setSwitcherOpen(true)}
-              onTest={() => setTesterOpen(true)}
-            />
-          )}
+        {/* Main: two-column layout */}
+        <div
+          className="flex-1 grid gap-4 min-h-0"
+          style={{ gridTemplateColumns: 'minmax(0,1fr) clamp(380px, 28vw, 460px)' }}
+        >
+          {/* Left: list */}
+          <div className="flex flex-col gap-3 min-h-0">
+            <div className="flex items-center gap-2">
+              <Button onClick={handleAdd} disabled={adding}>
+                {adding ? t('common.adding') : t('projects.addProject')}
+              </Button>
+            </div>
+            <div className="flex-1 rounded-2xl border border-border bg-bg-1 shadow-card overflow-y-auto">
+              {projects.length === 0 ? (
+                <div className="p-8 text-center text-text-2 text-sm">{t('projects.empty')}</div>
+              ) : (
+                <ul className="p-1.5 flex flex-col gap-0.5">
+                  {projects.map((p) => {
+                    const cfg = repoConfigs[p.id] ?? null;
+                    const d = detectIdentity(p, identities, cfg);
+                    return (
+                      <li
+                        key={p.id}
+                        onClick={() => setSelectedId(p.id)}
+                        onContextMenu={(e) => {
+                          e.preventDefault();
+                          setContextMenu({ x: e.clientX, y: e.clientY, projectId: p.id, projectName: p.name });
+                        }}
+                        className={cn(
+                          'relative flex items-center gap-3 px-3 py-2.5 rounded-md cursor-pointer transition-colors',
+                          p.id === selectedId
+                            ? 'bg-brand-soft shadow-[inset_3px_0_0_0_var(--brand)]'
+                            : 'hover:bg-bg-2'
+                        )}
+                      >
+                        <div className="h-8 w-8 shrink-0 rounded-md bg-brand-soft text-brand-strong flex items-center justify-center text-sm font-bold [[data-theme=dark]_&]:text-[#93c5fd]">
+                          {p.name.charAt(0).toUpperCase()}
+                        </div>
+                        <div className="flex-1 min-w-0">
+                          <div className="text-sm font-semibold text-text-0 truncate">{p.name}</div>
+                          <div className="text-xs text-text-2 truncate font-mono">{p.path}</div>
+                        </div>
+                        <Badge variant={d.kind === 'tracked' ? 'success' : d.kind === 'untracked' ? 'warning' : 'default'}>
+                          {d.kind === 'tracked' ? t('projects.badge.bound') : d.kind === 'untracked' ? t('projects.badge.untracked') : t('projects.badge.unbound')}
+                        </Badge>
+                      </li>
+                    );
+                  })}
+                </ul>
+              )}
+            </div>
+          </div>
+
+          {/* Right: detail panel */}
+          <div className="rounded-2xl border border-border bg-bg-1 shadow-card overflow-y-auto p-5">
+            {selected ? (
+              <ProjectDetail
+                project={selected}
+                detected={detected}
+                hasIdentities={identities.length > 0}
+                repoConfig={repoConfig}
+                onSwitch={() => setSwitcherOpen(true)}
+                onTest={() => setTesterOpen(true)}
+                onRemove={() => { void handleRemove(selected.id); }}
+              />
+            ) : (
+              <div className="h-full min-h-[280px] flex flex-col items-center justify-center text-text-2 text-sm gap-2">
+                <MousePointer className="h-8 w-8 opacity-50" />
+                <div>{t('projects.detail.empty')}</div>
+              </div>
+            )}
+          </div>
         </div>
 
         <IdentitySwitcherDialog
@@ -306,13 +369,14 @@ export function ProjectsView() {
   );
 }
 
-function ProjectDetail({ project, detected, hasIdentities, repoConfig, onSwitch, onTest }: {
+function ProjectDetail({ project, detected, hasIdentities, repoConfig, onSwitch, onTest, onRemove }: {
   project: { id: string; name: string; path: string };
   detected: DetectedIdentity;
   hasIdentities: boolean;
   repoConfig: RepoGitConfig | null;
   onSwitch: () => void;
   onTest: () => void;
+  onRemove: () => void;
 }) {
   const { t } = useTranslation();
   const [commits, setCommits] = useState<{ hash: string; subject: string }[]>([]);
@@ -325,76 +389,113 @@ function ProjectDetail({ project, detected, hasIdentities, repoConfig, onSwitch,
   const untrackedKey = detected.kind === 'untracked' ? detected.keyPath : null;
 
   return (
-    <div className="space-y-4 max-w-3xl">
-      <h1 className="text-2xl font-semibold">{project.name}</h1>
-      <Card className="p-4 space-y-2">
-        <Row label={t('projects.path')} value={project.path} />
-        <Row
-          label={t('projects.identity')}
-          value={
-            identity
-              ? `${identity.label} <${identity.userEmail || '—'}>`
-              : untrackedKey
-                ? t('projects.gitUsingUnknownKey', { path: untrackedKey })
-                : t('projects.noIdentity')
-          }
-        />
-        <Row label={t('projects.key')} value={identity?.keyPath ?? untrackedKey ?? '—'} />
-        {identity?.matchPath && <Row label={t('projects.match')} value={identity.matchPath} />}
-        <div className="flex flex-wrap items-center gap-2 pt-1">
-          {detected.kind === 'tracked' && detected.source === 'git' && (
-            <Badge variant="outline">{t('projects.detectedFromGit')}</Badge>
+    <div className="flex flex-col gap-5">
+      {/* Header */}
+      <div>
+        <h1 className="text-xl font-extrabold text-text-0">{project.name}</h1>
+        <p className="text-xs text-text-2 font-mono truncate mt-0.5">{project.path}</p>
+      </div>
+
+      {/* Git Identity */}
+      <div>
+        <SectionLabel>{t('projects.detail.identity')}</SectionLabel>
+        <div className="rounded-xl border border-border bg-bg-0 p-3 flex flex-col gap-1.5 text-sm">
+          {identity ? (
+            <>
+              <KV label={t('projects.detail.name')} value={identity.label} />
+              <KV label={t('projects.detail.email')} value={identity.userEmail || '—'} mono />
+              {identity.keyPath && <KV label={t('projects.detail.key')} value={identity.keyPath} mono />}
+              {identity.matchPath && <KV label={t('projects.match')} value={identity.matchPath} mono />}
+            </>
+          ) : untrackedKey ? (
+            <div className="text-text-1 text-xs">
+              {t('projects.gitUsingUnknownKey', { path: untrackedKey })}
+            </div>
+          ) : (
+            <div className="text-text-2 text-sm">{t('projects.detail.noIdentity')}</div>
           )}
-          {(detected.kind === 'untracked' || detected.kind === 'none') && (
-            <Badge variant="warning">{t('projects.noIdentityBadge')}</Badge>
-          )}
+          <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            {detected.kind === 'tracked' && detected.source === 'git' && (
+              <Badge variant="outline">{t('projects.detectedFromGit')}</Badge>
+            )}
+            {(detected.kind === 'untracked' || detected.kind === 'none') && (
+              <Badge variant="warning">{t('projects.noIdentityBadge')}</Badge>
+            )}
+          </div>
         </div>
-      </Card>
-      <div className="flex gap-2 items-center flex-wrap">
+      </div>
+
+      {/* Git Config */}
+      {repoConfig && (
+        <div>
+          <SectionLabel>{t('projects.detail.gitConfig')}</SectionLabel>
+          <div className="rounded-xl border border-border bg-bg-0 p-3 flex flex-col gap-1.5 text-sm">
+            <KV label={t('projects.detail.userName')} value={repoConfig.userName} />
+            <KV label={t('projects.detail.userEmail')} value={repoConfig.userEmail} mono />
+            <KV label={t('projects.detail.sshKey')} value={repoConfig.sshKeyPath} mono />
+          </div>
+        </div>
+      )}
+
+      {/* Actions */}
+      <div className="flex flex-wrap gap-2">
         {!hasIdentity ? (
-          <Button variant="default" onClick={onSwitch} disabled={!hasIdentities}>
+          <Button variant="default" onClick={onSwitch} disabled={!hasIdentities} className="flex-1">
             {untrackedKey ? t('projects.rebindIdentity') : t('projects.bindIdentity')}
           </Button>
         ) : (
           <>
-            <Button variant="outline" onClick={onSwitch}>{t('projects.switchIdentity')}</Button>
-            <Button variant="outline" onClick={onTest}>{t('projects.testSsh')}</Button>
+            <Button variant="default" onClick={onSwitch} className="flex-1">
+              {t('projects.switchIdentity')}
+            </Button>
+            <Button variant="outline" onClick={onTest} className="flex-1">
+              {t('projects.testSsh')}
+            </Button>
           </>
         )}
+        <Button variant="danger" onClick={onRemove}>{t('projects.removeMenu')}</Button>
       </div>
-      {repoConfig && (repoConfig.userName || repoConfig.userEmail) && (
-        <div className="text-text-2 text-xs">
-          {repoConfig.userName && <span>name = {repoConfig.userName}</span>}
-          {repoConfig.userName && repoConfig.userEmail && <span className="mx-2">·</span>}
-          {repoConfig.userEmail && <span>email = {repoConfig.userEmail}</span>}
-        </div>
-      )}
+
+      {/* Recent commits */}
       <div>
-        <h2 className="text-sm font-medium text-text-1 mb-2">{t('projects.recentCommits')}</h2>
-        <div className="border border-border rounded-md divide-y divide-border max-h-96 overflow-y-auto">
-          {commits.length === 0 && <div className="p-3 text-text-2 text-sm">{t('projects.noCommits')}</div>}
-          {commits.map((c) => (
-            <div key={c.hash} className="p-2 text-sm font-mono flex gap-3">
-              <span className="text-accent shrink-0">{c.hash.slice(0, 7)}</span>
-              <span className="text-text-1 truncate">{c.subject}</span>
-            </div>
-          ))}
+        <SectionLabel>{t('projects.recentCommits')}</SectionLabel>
+        <div className="rounded-xl border border-border bg-bg-0 overflow-hidden">
+          {commits.length === 0 ? (
+            <div className="p-3 text-text-2 text-sm">{t('projects.noCommits')}</div>
+          ) : (
+            <ul className="divide-y divide-border">
+              {commits.map((c) => (
+                <li key={c.hash} className="p-2 text-sm font-mono flex gap-3">
+                  <span className="text-brand-strong shrink-0 font-semibold [[data-theme=dark]_&]:text-[#93c5fd]">{c.hash.slice(0, 7)}</span>
+                  <span className="text-text-1 truncate">{c.subject}</span>
+                </li>
+              ))}
+            </ul>
+          )}
         </div>
       </div>
     </div>
   );
 }
 
-function Row({ label, value }: { label: string; value: string }) {
+function SectionLabel({ children }: { children: React.ReactNode }) {
+  return <div className="text-[11px] font-bold uppercase tracking-wider text-text-2 mb-1.5">{children}</div>;
+}
+
+function KV({ label, value, mono = false }: { label: string; value: string | null; mono?: boolean }) {
   return (
-    <div className="flex items-start gap-3 text-sm">
-      <span className="text-text-2 w-20 shrink-0">{label}</span>
-      <Tooltip>
-        <TooltipTrigger asChild>
-          <span className="text-text-0 font-mono break-all">{value}</span>
-        </TooltipTrigger>
-        <TooltipContent className="max-w-md break-all">{value}</TooltipContent>
-      </Tooltip>
+    <div className="flex justify-between gap-2 items-baseline">
+      <span className="text-text-1 shrink-0 text-xs">{label}</span>
+      {value ? (
+        <Tooltip>
+          <TooltipTrigger asChild>
+            <span className={cn('text-text-0 truncate', mono && 'font-mono text-xs')}>{value}</span>
+          </TooltipTrigger>
+          <TooltipContent className="max-w-md break-all">{value}</TooltipContent>
+        </Tooltip>
+      ) : (
+        <span className="text-text-2">—</span>
+      )}
     </div>
   );
 }
