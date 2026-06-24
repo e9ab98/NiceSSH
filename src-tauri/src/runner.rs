@@ -65,6 +65,67 @@ pub fn exec(program: &str, args: &[&str]) -> Result<ExecResult> {
     }
 }
 
+/// Like [exec] but writes the given bytes to stdin before reading
+/// stdout/stderr. Useful for commands that prompt interactively when an
+/// output file already exists (for example, ssh-keygen asks
+/// "Overwrite (y/n)?" when the target key file is already there).
+pub fn exec_with_stdin(program: &str, args: &[&str], stdin_bytes: &[u8]) -> Result<ExecResult> {
+    let mut child = Command::new(program)
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .stdin(Stdio::piped())
+        .spawn()
+        .map_err(|e| AppError::GitCommand(format!("spawn {} failed: {}", program, e)))?;
+
+    if let Some(mut stdin) = child.stdin.take() {
+        use std::io::Write;
+        let _ = stdin.write_all(stdin_bytes);
+        // Dropping stdin closes it, signaling EOF.
+    }
+
+    let start = Instant::now();
+    let timeout = Duration::from_secs(TIMEOUT_SECS);
+    loop {
+        match child.try_wait() {
+            Ok(Some(status)) => {
+                let mut stdout = String::new();
+                let mut stderr = String::new();
+                if let Some(mut s) = child.stdout.take() {
+                    let _ = s.read_to_string(&mut stdout);
+                }
+                if let Some(mut s) = child.stderr.take() {
+                    let _ = s.read_to_string(&mut stderr);
+                }
+                truncate(&mut stdout);
+                truncate(&mut stderr);
+                return Ok(ExecResult {
+                    exit_code: status.code(),
+                    stdout,
+                    stderr,
+                    timed_out: false,
+                });
+            }
+            Ok(None) => {
+                if start.elapsed() > timeout {
+                    let _ = child.kill();
+                    let _ = child.wait();
+                    return Ok(ExecResult {
+                        exit_code: None,
+                        stdout: String::new(),
+                        stderr: format!("timeout after {}s", TIMEOUT_SECS),
+                        timed_out: true,
+                    });
+                }
+                std::thread::sleep(Duration::from_millis(50));
+            }
+            Err(e) => {
+                return Err(AppError::GitCommand(format!("wait failed: {}", e)));
+            }
+        }
+    }
+}
+
 fn truncate(s: &mut String) {
     if s.len() > MAX_OUTPUT_BYTES {
         s.truncate(MAX_OUTPUT_BYTES);

@@ -34,6 +34,17 @@ export function ScanResultsDialog({ open, onOpenChange, candidates, onImport }: 
     });
   };
 
+  // The set of keys that are eligible to be selected (i.e. non-conflicting).
+  const eligibleKeys = candidates
+    .filter((c) => !c.conflictsWithExisting && !c.conflictsWithExistingKey)
+    .map((c) => keyFor(c));
+
+  const allSelected = eligibleKeys.length > 0 && eligibleKeys.every((k) => selected.has(k));
+  const noneSelected = eligibleKeys.every((k) => !selected.has(k));
+
+  const selectAll = () => setSelected(new Set(eligibleKeys));
+  const deselectAll = () => setSelected(new Set());
+
   const handleImport = async () => {
     if (busy) return;
     setBusy(true);
@@ -58,53 +69,73 @@ export function ScanResultsDialog({ open, onOpenChange, candidates, onImport }: 
         {candidates.length === 0 ? (
           <div className="text-text-1 text-sm py-8 text-center">{t('scanResults.empty')}</div>
         ) : (
-          <div className="space-y-2 max-h-[60vh] overflow-y-auto">
-            {candidates.map((c) => {
-              const k = keyFor(c);
-              const isSelected = selected.has(k);
-              const conflict = c.conflictsWithExisting || c.conflictsWithExistingKey;
-              return (
-                <label
-                  key={k}
-                  className={`block p-3 rounded-md border transition-colors cursor-pointer ${
-                    isSelected ? 'border-accent bg-bg-2' : 'border-border hover:bg-bg-2'
-                  }`}
-                >
-                  <div className="flex items-center justify-between gap-2">
-                    <div className="flex items-center gap-2 min-w-0 flex-1">
-                      <input
-                        type="checkbox"
-                        checked={isSelected}
-                        onChange={() => toggle(c)}
-                        className="shrink-0"
-                      />
-                      <span className="font-medium truncate">{c.label}</span>
-                      {c.provenance.kind === 'gitconfig_include_if' ? (
-                        <Badge variant="outline">{t('scanResults.fromGitconfig')}</Badge>
-                      ) : (
-                        <Badge variant="outline">{t('scanResults.fromSsh')}</Badge>
-                      )}
-                      {conflict && <Badge variant="warning">{t('scanResults.conflict')}</Badge>}
+          <>
+            {/* Toolbar: select all / deselect all + count */}
+            <div className="flex items-center justify-between gap-2 text-xs">
+              <div className="text-text-1">
+                {t('scanResults.selectedCount', { count: selected.size })}
+              </div>
+              {eligibleKeys.length > 0 && (
+                allSelected ? (
+                  <Button variant="ghost" size="sm" onClick={deselectAll} disabled={busy}>
+                    {t('scanResults.deselectAll')}
+                  </Button>
+                ) : (
+                  <Button variant="ghost" size="sm" onClick={selectAll} disabled={busy || noneSelected}>
+                    {t('scanResults.selectAll')}
+                  </Button>
+                )
+              )}
+            </div>
+
+            <div className="space-y-2 max-h-[55vh] overflow-y-auto">
+              {candidates.map((c) => {
+                const k = keyFor(c);
+                const isSelected = selected.has(k);
+                const conflict = c.conflictsWithExisting || c.conflictsWithExistingKey;
+                return (
+                  <label
+                    key={k}
+                    className={`block p-3 rounded-md border transition-colors cursor-pointer ${
+                      isSelected ? 'border-brand bg-brand-soft' : 'border-border hover:bg-bg-2'
+                    }`}
+                  >
+                    <div className="flex items-center justify-between gap-2">
+                      <div className="flex items-center gap-2 min-w-0 flex-1">
+                        <input
+                          type="checkbox"
+                          checked={isSelected}
+                          onChange={() => toggle(c)}
+                          className="shrink-0"
+                        />
+                        <span className="font-medium truncate">{c.label}</span>
+                        {c.provenance.kind === 'gitconfig_include_if' ? (
+                          <Badge variant="outline">{t('scanResults.fromGitconfig')}</Badge>
+                        ) : (
+                          <Badge variant="outline">{t('scanResults.fromSsh')}</Badge>
+                        )}
+                        {conflict && <Badge variant="warning">{t('scanResults.conflict')}</Badge>}
+                      </div>
                     </div>
-                  </div>
-                  <div className="text-text-1 text-xs mt-1 grid grid-cols-2 gap-x-3">
-                    {c.userName && <div>name: <span className="font-mono">{c.userName}</span></div>}
-                    {c.userEmail && <div>email: <span className="font-mono">{c.userEmail}</span></div>}
-                    {c.keyPath && <div className="col-span-2">key: <span className="font-mono break-all">{c.keyPath}</span></div>}
-                    {c.matchPath && <div className="col-span-2">match: <span className="font-mono">{c.matchPath}</span></div>}
-                  </div>
-                  <div className="text-text-2 text-xs mt-1">{c.provenance.detail}</div>
-                  {conflict && (
-                    <div className="text-warning text-xs mt-1">
-                      {c.conflictsWithExisting && t('scanResults.conflictLabel')}
-                      {c.conflictsWithExisting && c.conflictsWithExistingKey && ' · '}
-                      {c.conflictsWithExistingKey && t('scanResults.conflictKey')}
+                    <div className="text-text-1 text-xs mt-1 grid grid-cols-2 gap-x-3">
+                      {c.userName && <div>name: <span className="font-mono">{c.userName}</span></div>}
+                      {c.userEmail && <div>email: <span className="font-mono">{c.userEmail}</span></div>}
+                      {c.keyPath && <div className="col-span-2">key: <span className="font-mono break-all">{c.keyPath}</span></div>}
+                      {c.matchPath && <div className="col-span-2">match: <span className="font-mono">{c.matchPath}</span></div>}
                     </div>
-                  )}
-                </label>
-              );
-            })}
-          </div>
+                    <div className="text-text-2 text-xs mt-1">{c.provenance.detail}</div>
+                    {conflict && (
+                      <div className="text-warning text-xs mt-1">
+                        {c.conflictsWithExisting && t('scanResults.conflictLabel')}
+                        {c.conflictsWithExisting && c.conflictsWithExistingKey && ' · '}
+                        {c.conflictsWithExistingKey && t('scanResults.conflictKey')}
+                      </div>
+                    )}
+                  </label>
+                );
+              })}
+            </div>
+          </>
         )}
 
         <DialogFooter className="gap-2">

@@ -369,3 +369,263 @@ pub fn get_global_git_config() -> Result<GlobalGitConfig> {
         ssh_key_path,
     })
 }
+
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct GlobalGitConfigChange {
+    pub user_name: String,
+    pub user_email: String,
+    pub ssh_key_path: String,
+}
+
+/// A single parsed section from `~/.gitconfig`.
+#[derive(Debug, Clone)]
+struct GitConfigSection {
+    /// Section name (e.g. "user", "core", "includeIf \"gitdir:~/work/\"")
+    name: String,
+    /// Raw lines belonging to this section (including the header `[name]`).
+    /// For sections we want to rewrite, this is the authoritative content.
+    raw: String,
+    /// Whether this is an `[includeIf ...]` block. Such blocks must be
+    /// preserved verbatim — we never touch their directives.
+    is_include_if: bool,
+}
+
+/// Parse a `gitconfig` text into a sequence of top-level sections. A
+/// top-level section is anything introduced by a `[xxx]` header at the
+/// start of a line, OUTSIDE any other section. Comments and blank lines
+/// outside sections are kept as a leading prefix on the first section.
+fn parse_gitconfig_sections(raw: &str) -> Vec<GitConfigSection> {
+    let mut sections: Vec<GitConfigSection> = Vec::new();
+    let mut current: Option<GitConfigSection> = None;
+
+    for line in raw.lines() {
+        let trimmed = line.trim_start();
+        if trimmed.starts_with('[') && trimmed.contains(']') {
+            // New section header
+            if let Some(s) = current.take() {
+                sections.push(s);
+            }
+            let end = trimmed.find(']').unwrap();
+            let name = trimmed[1..end].trim().to_string();
+            let lower = name.to_ascii_lowercase();
+            let is_include_if = lower.starts_with("includeif");
+            current = Some(GitConfigSection {
+                name,
+                raw: format!("{}\n", line),
+                is_include_if,
+            });
+        } else if let Some(s) = current.as_mut() {
+            s.raw.push_str(line);
+            s.raw.push('\n');
+        } else {
+            // Lines before any section (comments / blanks). Attach to next
+            // section we create; for simplicity, treat as a synthetic
+            // "_prefix" section.
+            if sections.is_empty() && current.is_none() {
+                // not inside a section yet; create a holder with the line
+                current = Some(GitConfigSection {
+                    name: String::new(),
+                    raw: format!("{}\n", line),
+                    is_include_if: false,
+                });
+            } else if let Some(last) = sections.last_mut() {
+                last.raw.push_str(line);
+                last.raw.push('\n');
+            }
+        }
+    }
+    if let Some(s) = current {
+        sections.push(s);
+    }
+    sections
+}
+
+/// Build a new `[user]` block string (with the given name + email).
+fn build_user_block(name: &str, email: &str) -> String {
+    format!("[user]\n    name = {}\n    email = {}\n", name, email)
+}
+
+/// Build a new `[core]` block string (or partial block with just the
+/// sshCommand key) based on whether other core keys are present in `raw`.
+/// If `raw` has no body lines besides sshCommand, emit a full `[core]`
+/// block; otherwise emit only the `sshCommand = ...` line.
+fn build_core_sshcommand_line(ssh_cmd: &str, raw: &str) -> String {
+    let has_other = raw
+        .lines()
+        .filter(|l| !l.trim().is_empty() && !l.trim_start().starts_with('['))
+        .any(|l| {
+            let t = l.trim_start();
+            !(t.starts_with("sshCommand") || t.starts_with("sshcommand"))
+        });
+    if has_other {
+        format!("    sshCommand = {}\n", ssh_cmd)
+    } else {
+        format!("[core]\n    sshCommand = {}\n", ssh_cmd)
+    }
+}
+
+/// Rewrite only the top-level `[user]` name/email and `[core] sshCommand`
+/// in a `gitconfig` text. ALL `[includeIf ...]` blocks are preserved
+/// verbatim. Other sections are also preserved.
+fn rewrite_global_defaults(raw: &str, identity: &Identity) -> String {
+    let sections = parse_gitconfig_sections(raw);
+
+    let ssh_cmd = format!("ssh -i {} -o IdentitiesOnly=yes", identity.key_path);
+
+    // Look for existing [user] and [core] sections (case-insensitive, top-level only).
+    let mut user_idx: Option<usize> = None;
+    let mut core_idx: Option<usize> = None;
+    for (i, s) in sections.iter().enumerate() {
+        if s.is_include_if {
+            continue;
+        }
+        match s.name.to_ascii_lowercase().as_str() {
+            "user" if user_idx.is_none() => user_idx = Some(i),
+            "core" if core_idx.is_none() => core_idx = Some(i),
+            _ => {}
+        }
+    }
+
+    let mut out_sections = sections;
+
+    // Replace or append [user]
+    if let Some(i) = user_idx {
+        out_sections[i].raw = build_user_block(&identity.user_name, &identity.user_email);
+    } else {
+        out_sections.push(GitConfigSection {
+            name: "user".to_string(),
+            raw: build_user_block(&identity.user_name, &identity.user_email),
+            is_include_if: false,
+        });
+    }
+
+    // Replace or merge [core] sshCommand
+    if let Some(i) = core_idx {
+        // Recompute index in case we appended [user] above
+        let i = if user_idx.is_none() { out_sections.len() - 1 } else { i };
+        let existing = out_sections[i].raw.clone();
+        out_sections[i].raw = build_core_sshcommand_line(&ssh_cmd, &existing);
+    } else {
+        out_sections.push(GitConfigSection {
+            name: "core".to_string(),
+            raw: build_core_sshcommand_line(&ssh_cmd, ""),
+            is_include_if: false,
+        });
+    }
+
+    // Reassemble. Trim trailing whitespace on each section to avoid piling
+    // up blank lines; we'll add exactly one blank line between sections.
+    let mut out = String::new();
+    for (i, s) in out_sections.iter().enumerate() {
+        if i > 0 {
+            // Ensure separation: if previous content didn't end with \n\n,
+            // insert a blank line.
+            if !out.ends_with("\n\n") {
+                if out.ends_with('\n') {
+                    out.push('\n');
+                } else {
+                    out.push_str("\n\n");
+                }
+            }
+        }
+        out.push_str(s.raw.trim_end());
+        out.push('\n');
+    }
+    out
+}
+
+#[tauri::command]
+pub fn set_global_git_config(identity_id: String) -> Result<GlobalGitConfigChange> {
+    let cfg = config_store::read()?;
+    let identity = cfg
+        .identities
+        .iter()
+        .find(|i| i.id == identity_id)
+        .ok_or_else(|| AppError::NotFound(format!("identity {}", identity_id)))?;
+
+    let path = paths::gitconfig_path()?;
+    let before = if path.exists() {
+        std::fs::read_to_string(&path)?
+    } else {
+        String::new()
+    };
+    let new_raw = rewrite_global_defaults(&before, identity);
+
+    crate::history::commit_change(
+        "set_global_git_config",
+        &format!("Set global default to identity {}", identity.label),
+        std::iter::once((
+            path.to_string_lossy().to_string(),
+            crate::history::FileChange {
+                before: before.clone(),
+                after: new_raw.clone(),
+            },
+        ))
+        .collect(),
+    )?;
+    crate::fs_safety::atomic_write(&path, &new_raw, 0o644)?;
+
+    Ok(GlobalGitConfigChange {
+        user_name: identity.user_name.clone(),
+        user_email: identity.user_email.clone(),
+        ssh_key_path: identity.key_path.clone(),
+    })
+}
+
+#[cfg(test)]
+mod rewrite_tests {
+    use super::*;
+    use crate::config_store::Identity;
+
+    fn ident() -> Identity {
+        Identity {
+            id: "i1".into(),
+            label: "Work".into(),
+            user_name: "工作名".into(),
+            user_email: "work@x.com".into(),
+            key_path: "~/.ssh/work_ed25519".into(),
+            match_path: None,
+            host_alias: None,
+            git_host: None,
+        }
+    }
+
+    #[test]
+    fn preserves_include_if_block() {
+        let raw = "[user]\n    name = old\n    email = old@x.com\n\n[includeIf \"gitdir:~/work/\"]\n    path = ~/.gitconfig-work\n\n[core]\n    sshCommand = ssh -i old\n";
+        let after = rewrite_global_defaults(raw, &ident());
+        assert!(after.contains("[includeIf \"gitdir:~/work/\"]"));
+        assert!(after.contains("path = ~/.gitconfig-work"));
+        assert!(after.contains("name = 工作名"));
+        assert!(after.contains("email = work@x.com"));
+        assert!(after.contains("sshCommand = ssh -i ~/.ssh/work_ed25519"));
+        // No leftover old values in the rewritten [user] / [core] sshCommand
+        assert!(!after.contains("name = old"));
+        assert!(!after.contains("email = old@x.com"));
+        assert!(!after.contains("ssh -i old\n"));
+    }
+
+    #[test]
+    fn appends_user_when_missing() {
+        let raw = "[includeIf \"gitdir:~/foo/\"]\n    path = ~/.gitconfig-foo\n";
+        let after = rewrite_global_defaults(raw, &ident());
+        assert!(after.contains("[includeIf \"gitdir:~/foo/\"]"));
+        assert!(after.contains("[user]\n    name = 工作名"));
+    }
+
+    #[test]
+    fn appends_core_sshcommand_when_missing() {
+        let raw = "[user]\n    name = a\n    email = a@x.com\n";
+        let after = rewrite_global_defaults(raw, &ident());
+        assert!(after.contains("[core]\n    sshCommand = ssh -i ~/.ssh/work_ed25519"));
+    }
+
+    #[test]
+    fn handles_empty_input() {
+        let raw = "";
+        let after = rewrite_global_defaults(raw, &ident());
+        assert!(after.contains("[user]"));
+        assert!(after.contains("[core]"));
+    }
+}

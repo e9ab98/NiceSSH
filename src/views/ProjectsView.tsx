@@ -8,7 +8,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../com
 import { useProjectsStore } from '../store/projects';
 import { useIdentitiesStore } from '../store/identities';
 import { useSettingsStore } from '../store/settings';
-import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, getGlobalGitConfig, isGitRepo, type RepoGitConfig, type GlobalGitConfig } from '../ipc/git';
+import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, getGlobalGitConfig, isGitRepo, setGlobalGitConfig, type RepoGitConfig, type GlobalGitConfig } from '../ipc/git';
 import { tryUnlockKey, isKeyEncrypted } from '../ipc/sshAdd';
 import { IdentitySwitcherDialog } from '../features/identitySwitcher/IdentitySwitcherDialog';
 import { PassphraseDialog } from '../features/passphraseDialog/PassphraseDialog';
@@ -226,6 +226,24 @@ export function ProjectsView() {
     }
   };
 
+  const handleSetAsGlobal = async () => {
+    if (!identity) return;
+    const target = identities.find((i) => i.id === identity.id);
+    if (!target) return;
+    if (!confirm(t('projects.setAsGlobalConfirm', { label: target.label }))) return;
+    try {
+      const result = await setGlobalGitConfig(target.id);
+      toast.success(
+        t('projects.setAsGlobalApplied', {
+          label: target.label,
+          email: result.userEmail,
+        })
+      );
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
   const handleDelete = async () => {
     if (!contextMenu) return;
     if (!confirm(t('projects.deleteConfirm'))) return;
@@ -313,6 +331,7 @@ export function ProjectsView() {
                 onSwitch={() => setSwitcherOpen(true)}
                 onTest={() => setTesterOpen(true)}
                 onRemove={() => { void handleRemove(selected.id); }}
+                onSetAsGlobal={() => { void handleSetAsGlobal(); }}
               />
             ) : (
               <div className="h-full min-h-[280px] flex flex-col items-center justify-center text-text-2 text-sm gap-2">
@@ -369,7 +388,7 @@ export function ProjectsView() {
   );
 }
 
-function ProjectDetail({ project, detected, hasIdentities, repoConfig, onSwitch, onTest, onRemove }: {
+function ProjectDetail({ project, detected, hasIdentities, repoConfig, onSwitch, onTest, onRemove, onSetAsGlobal }: {
   project: { id: string; name: string; path: string };
   detected: DetectedIdentity;
   hasIdentities: boolean;
@@ -377,6 +396,7 @@ function ProjectDetail({ project, detected, hasIdentities, repoConfig, onSwitch,
   onSwitch: () => void;
   onTest: () => void;
   onRemove: () => void;
+  onSetAsGlobal: () => void;
 }) {
   const { t } = useTranslation();
   const [commits, setCommits] = useState<{ hash: string; subject: string }[]>([]);
@@ -452,6 +472,11 @@ function ProjectDetail({ project, detected, hasIdentities, repoConfig, onSwitch,
               {t('projects.testSsh')}
             </Button>
           </>
+        )}
+        {hasIdentity && (
+          <Button variant="ghost" onClick={onSetAsGlobal} className="w-full">
+            {t('projects.setAsGlobalDefault')}
+          </Button>
         )}
         <Button variant="danger" onClick={onRemove}>{t('projects.removeMenu')}</Button>
       </div>

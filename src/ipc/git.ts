@@ -28,3 +28,12 @@ export interface GlobalGitConfig {
 
 export const getGlobalGitConfig = () =>
   ipc<GlobalGitConfig>('get_global_git_config');
+
+export interface GlobalGitConfigChange {
+  userName: string;
+  userEmail: string;
+  sshKeyPath: string;
+}
+
+export const setGlobalGitConfig = (identityId: string) =>
+  ipc<GlobalGitConfigChange>('set_global_git_config', { identityId });

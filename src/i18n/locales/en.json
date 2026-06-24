@@ -86,7 +86,10 @@
       "switch": "Switch identity",
       "test": "Test connection"
     },
-    "empty": "No projects yet. Add a repo to get started."
+    "empty": "No projects yet. Add a repo to get started.",
+    "setAsGlobalDefault": "Set as global default",
+    "setAsGlobalConfirm": "Set {{label}} as the global Git identity? This will affect all repositories not matched by includeIf rules.",
+    "setAsGlobalApplied": "Global default set to {{label}} ({{email}})"
   },
   "identities": {
     "title": "Identities",
@@ -97,7 +100,8 @@
     "deleteConfirm": "Delete this identity?",
     "created": "Identity created",
     "keyGenerated": "Key generated",
-    "match": "match"
+    "match": "match",
+    "updated": "Identity updated"
   },
   "identityForm": {
     "newTitle": "New Identity",
@@ -123,7 +127,9 @@
     "success": "Key generated, public key copied to clipboard",
     "publicKeyLabel": "Public Key",
     "addToGithub": "Add this key to your GitHub account:",
-    "githubKeysLink": "github.com/settings/keys"
+    "githubKeysLink": "github.com/settings/keys",
+    "overwriteWarning": "A key file named {{name}} already exists in ~/.ssh/. Generating will overwrite it.",
+    "overwriteConfirm": "Overwrite existing key file ~/.ssh/{{name}}? This cannot be undone."
   },
   "addProject": {
     "title": "Add Project",
@@ -137,7 +143,16 @@
   },
   "identitySwitcher": {
     "title": "Switch Identity",
-    "empty": "No identities. Create one first."
+    "empty": "No identities. Create one first.",
+    "scope": {
+      "project": "This project",
+      "global": "Global default"
+    },
+    "scopeHint": {
+      "project": "Affects only this repository's .git/config",
+      "global": "Affects ~/.gitconfig default for all repos without includeIf match"
+    },
+    "globalApplied": "Global default set to {{label}} ({{email}})"
   },
   "passphrase": {
     "title": "Unlock SSH Key",
@@ -237,7 +252,10 @@
     "scanning": "Scanning…",
     "scanSuccess_one": "Imported {{count}} identity",
     "scanSuccess_other": "Imported {{count}} identities",
-    "scanFailed": "Scan failed: {{message}}"
+    "scanFailed": "Scan failed: {{message}}",
+    "selectAll": "Select all",
+    "deselectAll": "Deselect all",
+    "selectedCount": "{{count}} selected"
   },
   "update": {
     "toast": {

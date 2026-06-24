@@ -11,6 +11,15 @@ pub struct GeneratedKey {
     pub fingerprint: String,
 }
 
+/// Check whether an SSH key with the given name already exists in
+/// ~/.ssh/. The UI uses this to show an overwrite warning before
+/// generating a new key with the same name.
+#[tauri::command]
+pub fn ssh_key_exists(name: String) -> Result<bool> {
+    let path = paths::ssh_dir()?.join(&name);
+    Ok(path.exists())
+}
+
 #[tauri::command]
 pub fn list_keys() -> Result<Vec<ssh_keys::SshKey>> {
     ssh_keys::list()
@@ -44,7 +53,16 @@ pub fn generate_key(
         passphrase.unwrap_or_default(),
     ];
     let arg_refs: Vec<&str> = args.iter().map(|s| s.as_str()).collect();
-    let result = runner::exec("ssh-keygen", &arg_refs)?;
+    // If the target key file already exists, ssh-keygen prompts
+    // "Overwrite (y/n)?" interactively. Since we are non-interactive
+    // (and the UI has already shown an overwrite warning + user confirmed),
+    // we feed "y " to stdin so the generation proceeds.
+    let stdin_bytes: Vec<u8> = if private_path.exists() {
+        vec![b'y', b'\n']
+    } else {
+        Vec::new()
+    };
+    let result = runner::exec_with_stdin("ssh-keygen", &arg_refs[..], &stdin_bytes)?;
     if result.exit_code != Some(0) {
         return Err(AppError::KeygenFailed(result.stderr));
     }

@@ -1,9 +1,9 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { Input, Label } from '../../components/ui/input';
 import { Button } from '../../components/ui/button';
-import { generateKey } from '../../ipc/sshKeys';
+import { generateKey, sshKeyExists } from '../../ipc/sshKeys';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
 import { toast } from 'sonner';
 
@@ -22,8 +22,18 @@ export function KeyGeneratorDialog({ open, onOpenChange, defaultName, defaultCom
   const [comment, setComment] = useState(defaultComment);
   const [passphrase, setPassphrase] = useState('');
   const [submitting, setSubmitting] = useState(false);
+
+  // Check whether the target key file already exists in ~/.ssh/ whenever
+  // the name changes. Used to show an overwrite warning + require confirm.
+  useEffect(() => {
+    if (!name) { setExists(false); return; }
+    let cancelled = false;
+    sshKeyExists(name).then((v) => { if (!cancelled) setExists(v); }).catch(() => { if (!cancelled) setExists(false); });
+    return () => { cancelled = true; };
+  }, [name]);
   const [publicKey, setPublicKey] = useState<string | null>(null);
   const [fingerprint, setFingerprint] = useState<string | null>(null);
+  const [exists, setExists] = useState(false);
 
   const submit = async (e: React.FormEvent) => {
     e.preventDefault();
@@ -34,6 +44,15 @@ export function KeyGeneratorDialog({ open, onOpenChange, defaultName, defaultCom
     }
     setSubmitting(true);
     try {
+      // Re-check existence at submit time and ask for explicit confirmation
+      // if the key will overwrite an existing file.
+      const willOverwrite = await sshKeyExists(name);
+      if (willOverwrite) {
+        if (!confirm(t('keyGenerator.overwriteConfirm', { name }))) {
+          setSubmitting(false);
+          return;
+        }
+      }
       const result = await generateKey({ name, keyType, comment, passphrase: passphrase || null });
       try { await writeText(result.publicKey); } catch { /* clipboard may not be available in dev */ }
       setPublicKey(result.publicKey);
@@ -50,6 +69,7 @@ export function KeyGeneratorDialog({ open, onOpenChange, defaultName, defaultCom
       setPublicKey(null);
       setFingerprint(null);
       setPassphrase('');
+      setExists(false);
     }
     onOpenChange(v);
   };
@@ -63,6 +83,11 @@ export function KeyGeneratorDialog({ open, onOpenChange, defaultName, defaultCom
             <div>
               <Label htmlFor="kname">{t('keyGenerator.keyName')}</Label>
               <Input id="kname" value={name} onChange={(e) => setName(e.target.value)} required />
+              {exists && (
+                <div className="mt-1.5 text-xs text-danger font-semibold [[data-theme=dark]_&]:text-[#fca5a5]">
+                  ⚠ {t('keyGenerator.overwriteWarning', { name })}
+                </div>
+              )}
             </div>
             <div>
               <Label htmlFor="ktype">{t('keyGenerator.keyType')}</Label>

@@ -5,7 +5,6 @@ import { Route, Routes, Navigate } from 'react-router-dom';
 import { useUpdateCheck } from './hooks/useUpdateCheck';
 import { ProjectsView } from './views/ProjectsView';
 import { IdentitiesView } from './views/IdentitiesView';
-import { SshKeysView } from './views/SshKeysView';
 import { SshConfigView } from './views/SshConfigView';
 import { HistoryView } from './views/HistoryView';
 import { SettingsView } from './views/SettingsView';
@@ -24,7 +23,6 @@ export default function App() {
               <Route path="/" element={<Navigate to="/projects" replace />} />
               <Route path="/projects" element={<ProjectsView />} />
               <Route path="/identities" element={<IdentitiesView />} />
-              <Route path="/keys" element={<SshKeysView />} />
               <Route path="/config" element={<SshConfigView />} />
               <Route path="/history" element={<HistoryView />} />
               <Route path="/settings" element={<SettingsView />} />

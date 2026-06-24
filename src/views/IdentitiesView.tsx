@@ -16,6 +16,7 @@ export function IdentitiesView() {
   const { t } = useTranslation();
   const { items, loading, refresh, create, update, remove } = useIdentitiesStore();
   const [formOpen, setFormOpen] = useState(false);
+  const [editing, setEditing] = useState<Identity | null>(null);
   const [genFor, setGenFor] = useState<Identity | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
   const [candidates, setCandidates] = useState<ScannedIdentity[]>([]);
@@ -94,6 +95,9 @@ export function IdentitiesView() {
                   {id.matchPath && <div className="text-text-2 text-xs mt-0.5">{t('identities.match')}: {id.matchPath}</div>}
                 </div>
                 <div className="flex gap-2 shrink-0">
+                  <Button variant="outline" size="sm" onClick={() => setEditing(id)}>
+                    {t('common.edit')}
+                  </Button>
                   <Button variant="outline" size="sm" onClick={() => setGenFor(id)}>
                     {id.keyPath.includes('id_') ? t('identities.regenerateKey') : t('identities.generateKey')}
                   </Button>
@@ -115,6 +119,18 @@ export function IdentitiesView() {
             toast.success(t('identities.created'));
           }}
         />
+        {editing && (
+          <IdentityFormDialog
+            open={!!editing}
+            onOpenChange={(v) => !v && setEditing(null)}
+            initial={editing}
+            onSubmit={async (values) => {
+              await update(editing.id, { ...editing, ...values });
+              toast.success(t('identities.updated'));
+              setEditing(null);
+            }}
+          />
+        )}
         {genFor && (
           <KeyGeneratorDialog
             open={!!genFor}

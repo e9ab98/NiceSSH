@@ -19,6 +19,36 @@ use serde::Serialize;
 use crate::error::Result;
 use crate::paths;
 
+/// Parse an SSH public key comment into (userName, userEmail).
+///
+/// Recognized formats (in priority order):
+/// 1. "Name <email>" (e.g. "Alice <alice@example.com>")  -> (Some("Alice"), Some("alice@example.com"))
+/// 2. bare identifier (e.g. "alice")                          -> (Some("alice"), None)
+/// 3. anything else (incl. "user@host", garbage)              -> (None, None)
+///
+/// Format 2 (user@host) is intentionally NOT mapped to (None, Some(email))
+/// because "user@host" is too ambiguous to safely use as an email.
+fn parse_pubkey_comment(raw: &str) -> (Option<String>, Option<String>) {
+    let trimmed = raw.trim().trim_matches('"').trim_matches('\'').trim();
+    if trimmed.is_empty() {
+        return (None, None);
+    }
+    // Format 1: "Name <email>"
+    if let Some((name, rest)) = trimmed.split_once('<') {
+        let name = name.trim();
+        let rest = rest.strip_suffix('>').unwrap_or(rest).trim();
+        if !name.is_empty() && rest.contains('@') && !rest.contains(' ') {
+            return (Some(name.to_string()), Some(rest.to_string()));
+        }
+    }
+    // Format 2: bare identifier
+    if !trimmed.contains('@') && !trimmed.contains(' ') && !trimmed.contains('<') {
+        return (Some(trimmed.to_string()), None);
+    }
+    (None, None)
+}
+
+
 #[derive(Debug, Clone, Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ScannedIdentity {
@@ -249,11 +279,15 @@ fn scan_ssh_key_orphans(
         let comment = fs::read_to_string(&pub_path).ok().and_then(|s| {
             s.split_whitespace().nth(2).map(|c| c.to_string())
         });
+        let (parsed_name, parsed_email) = match comment.as_deref() {
+            None => (None, None),
+            Some(raw) => parse_pubkey_comment(raw),
+        };
         let label = name.to_string();
         out.push(ScannedIdentity {
             label: label.clone(),
-            user_name: None,
-            user_email: comment.clone(),
+            user_name: parsed_name,
+            user_email: parsed_email,
             key_path: Some(abs.clone()),
             match_path: None,
             conflicts_with_existing: existing.labels.contains(&label.to_lowercase()),
@@ -337,7 +371,10 @@ mod tests {
             assert_eq!(candidates.len(), 1);
             let c = &candidates[0];
             assert_eq!(c.label, "id_personal");
-            assert_eq!(c.user_email.as_deref(), Some("personal@host"));
+            // "user@host" is too ambiguous to map to userName or userEmail;
+            // both stay None so the user fills them in by hand.
+            assert_eq!(c.user_name, None);
+            assert_eq!(c.user_email, None);
             assert_eq!(c.provenance.kind, ProvenanceKind::SshKeyOrphan);
             assert!(c.match_path.is_none());
         });
@@ -376,4 +413,57 @@ mod tests {
             assert!(candidates[0].conflicts_with_existing_key);
         });
     }
+
+    // -------- parse_pubkey_comment --------
+
+    #[test]
+    fn parse_comment_name_and_email() {
+        assert_eq!(
+            parse_pubkey_comment("Alice <alice@example.com>"),
+            (Some("Alice".into()), Some("alice@example.com".into()))
+        );
+    }
+
+    #[test]
+    fn parse_comment_name_and_email_with_spaces() {
+        assert_eq!(
+            parse_pubkey_comment("Alice Smith <alice@example.com>"),
+            (Some("Alice Smith".into()), Some("alice@example.com".into()))
+        );
+    }
+
+    #[test]
+    fn parse_comment_name_and_email_quoted() {
+        assert_eq!(
+            parse_pubkey_comment("\"Alice <alice@example.com>\""),
+            (Some("Alice".into()), Some("alice@example.com".into()))
+        );
+    }
+
+    #[test]
+    fn parse_comment_bare_name() {
+        assert_eq!(parse_pubkey_comment("alice"), (Some("alice".into()), None));
+    }
+
+    #[test]
+    fn parse_comment_user_at_host_returns_none() {
+        assert_eq!(parse_pubkey_comment("alice@laptop"), (None, None));
+    }
+
+    #[test]
+    fn parse_comment_empty_returns_none() {
+        assert_eq!(parse_pubkey_comment(""), (None, None));
+        assert_eq!(parse_pubkey_comment("   "), (None, None));
+    }
+
+    #[test]
+    fn parse_comment_garbage_returns_none() {
+        assert_eq!(parse_pubkey_comment("random text with spaces"), (None, None));
+    }
+
+    #[test]
+    fn parse_comment_email_without_angle_returns_none() {
+        assert_eq!(parse_pubkey_comment("alice@example.com"), (None, None));
+    }
+
 }
