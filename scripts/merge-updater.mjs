@@ -109,24 +109,30 @@ if (updaterJsonFiles.length === 0) {
   console.warn("Falling back to a MINIMAL latest.json built from the .sig files we have.");
 
   // Build latest.json from .sig + bundle files only (no version from JSON).
+  // We detect the platform by walking the .sig file's path (see
+  // detectPlatformFromPath above). Basename matching fails for macOS
+  // because both archs produce a file called NiceSSH.app.tar.gz.sig
+  // and the platformFiles map ends up with both darwin keys pointing
+  // at the same fname, so the first one to claim the bundle name wins
+  // and the other arch's .sig is silently dropped.
   const mergedFallback = { platforms: {} };
   for (const f of allFiles) {
     if (!f.name.endsWith(".sig")) continue;
     const base = f.name.slice(0, -4);
-    // Try to match a known bundle name -> platform
-    for (const [platform, fname] of Object.entries(platformFiles)) {
-      if (fname === base) {
-        const sigContent = fs.readFileSync(f.path, "utf8").trim();
-        // .sig files often have a leading "untrusted comment: ..." line; keep the
-        // actual signature on the last line.
-        const sigLines = sigContent.split("\n").filter(l => l && !l.startsWith("untrusted comment"));
-        mergedFallback.platforms[platform] = {
-          signature: sigLines[sigLines.length - 1] || sigContent,
-          url: ""
-        };
-        break;
-      }
-    }
+    const platform = detectPlatformFromPath(f.path);
+    if (!platform) continue;
+    // Sanity: the .sig basename must match the bundle filename for
+    // that platform, otherwise we would attach a wrong-platform
+    // signature.
+    if (platformFiles[platform] !== base) continue;
+    const sigContent = fs.readFileSync(f.path, "utf8").trim();
+    // .sig files often have a leading "untrusted comment: ..." line; keep the
+    // actual signature on the last line.
+    const sigLines = sigContent.split("\n").filter(l => l && !l.startsWith("untrusted comment"));
+    mergedFallback.platforms[platform] = {
+      signature: sigLines[sigLines.length - 1] || sigContent,
+      url: ""
+    };
   }
   // Stamp version from env tag (v0.3.118 -> 0.3.118) so client-side compare works.
   const tagVer = currentTag.replace(/^v/, "");
