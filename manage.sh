@@ -34,7 +34,7 @@ print_menu() {
   NiceSSH 项目工具
 ═══════════════════════════════════════
   1) 打 tag 发版    (改 4 文件到 next version + commit + push main + push tag)
-  2) Tag 管理       (列本地 / 删本地 / 列远端 / 删远端 — 删必须 --confirm)
+  2) Tag 管理       (列 TAG 本地+远端 / 删本地 / 删远端 — 删必须 --confirm; q 返回主菜单)
   3) 修改版本号     (改 4 文件到 X.Y.Z 或 PATCH; 不 commit, 你自己提交)
   4) 查看版本号     (只读打印 4 文件当前 version + 下一个 next 预览)
   5) 退出
@@ -183,20 +183,18 @@ opt_tags() {
   echo ""
   echo "── Option 2: Tag 管理 ──"
   echo ""
-  echo "  1) 列本地 v* tag"
+  echo "  1) 列 TAG (本地 + 远端)"
   echo "  2) 删本地 v* tag     (需要 --confirm)"
-  echo "  3) 列远端 v* tag"
-  echo "  4) 删远端 v* tag     (需要 --confirm)"
-  echo "  5) 返回主菜单"
+  echo "  3) 删远端 v* tag     (需要 --confirm)"
+  echo "  q) 返回主菜单"
   printf "> "
   read -r sub
 
   case "$sub" in
-    1) list_local_tags ;;
+    1) list_local_tags && echo "" && list_remote_tags ;;
     2) delete_local_tags ;;
-    3) list_remote_tags ;;
-    4) delete_remote_tags ;;
-    5|"") return 0 ;;
+    3) delete_remote_tags ;;
+    q|Q) return 0 ;;
     *) echo "Unknown choice: '${sub}'"; return 1 ;;
   esac
 }
