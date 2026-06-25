@@ -160,9 +160,15 @@ EOF
     return 2
   fi
 
+  echo "→ Creating tag ${tag}…"
+  if ! git tag -a "${tag}" -m "Release ${tag}"; then
+    echo "::error::git tag -a ${tag} failed. Resolve manually (e.g. delete a conflicting tag), then re-run." >&2
+    return 1
+  fi
+
   echo "→ Pushing tag ${tag}…"
   if ! git push origin "refs/tags/${tag}"; then
-    echo "::error::git push origin ${tag} was rejected. Retry: git push origin ${tag}" >&2
+    echo "::error::git push origin ${tag} was rejected. Local tag exists. Retry: git push origin ${tag}" >&2
     return 2
   fi
 

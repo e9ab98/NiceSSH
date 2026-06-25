@@ -188,6 +188,13 @@ if ! git push origin HEAD:main; then
   exit 2
 fi
 
+# Create the tag locally (pointing at the version commit we just pushed).
+echo "→ Creating tag ${TAG}…"
+if ! git tag -a "${TAG}" -m "Release ${TAG}"; then
+  echo "::error::git tag -a ${TAG} failed. Resolve manually (e.g. delete a conflicting tag), then re-run." >&2
+  exit 1
+fi
+
 # Push the tag.
 echo "→ Pushing tag ${TAG}…"
 if ! git push origin "refs/tags/${TAG}"; then
