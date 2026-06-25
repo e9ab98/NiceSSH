@@ -1,0 +1,23 @@
+{
+  "version": "0.4.54",
+  "pub_date": "2026-06-25T09:47:00.864Z",
+  "notes": "",
+  "platforms": {
+    "aarch64-apple-darwin": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc2owVXR6aDRGS2h2RnV6SEZYUUUvS2ZWdFVpdzJmNnpkMkkyV01UZmpOWjBPTVpEdGhONm10a2FZbUEzOFRtLzVhVlIwQ3NJZGNucjZwYzdaWGJtY2hlcWxzOUhJL1E4PQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyMzgwNzQwCWZpbGU6TmljZVNTSC5hcHAudGFyLmd6ClFaRndEK3h3d2MzZUowYTFjbHByMEEzUVNoSHBWNzUxZWF0d3o5N1RZSEdHaHlMZW5NZTNCeTRPaVZlaVNGOHdFZUg0ejZWVnlQdFh2ZGRHczU3QUN3PT0K",
+      "url": "https://github.com/e9ab98/NiceSSH/releases/download/v0.4.54/NiceSSH.app.tar.gz"
+    },
+    "x86_64-apple-darwin": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc2owVXR6aDRGS2pqZFpPY04vNm5DejJaTGtDYVlCazZnS1E0bDY4RWxyTTZZZWFrS0FwakkwdTZwZ2VBWEhGbXcvRzJZOUlqSG5wNzVoTW9MeGtJYWVJcExONEV4RmdjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyMzgwNjU0CWZpbGU6TmljZVNTSC5hcHAudGFyLmd6CnhmUlREOTVRTkxYUlFUT3k0VEFIZTFpV0hOUDM0S09TblVFakhudVNreEFyRm9UaGNOcEZFWUF6SVJ0MWhCRTBuS1hzMmxiYlhsbGt3cHhYbzJwMkNBPT0K",
+      "url": "https://github.com/e9ab98/NiceSSH/releases/download/v0.4.54/NiceSSH.app.tar.gz"
+    },
+    "x86_64-unknown-linux-gnu": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc2owVXR6aDRGS2plOGc5NDB5ZXUvek8vRHc0RG5QdmxqYVhNWDhwdW5pOXd4bURmMmVRaDBoWmdIem91RUhVZVVsenI4L0x2MklEOHZlN1JJZFNTOGVJQkNGbEUxTFFJPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyMzgwNzkyCWZpbGU6TmljZVNTSF8wLjQuNTRfYW1kNjQuQXBwSW1hZ2UKN0xNajRqK1BBSllndTBhRWZwN2FWdVEyUXpQYjIzd2hCc3cyUUUwcTJHOHJ6RFgxSzFPUmtFc2NRamR4TzNmdlJIMk5tRlZkclZjQWtGYlFhSGNoRHc9PQo=",
+      "url": "https://github.com/e9ab98/NiceSSH/releases/download/v0.4.54/NiceSSH_0.4.54_amd64.AppImage"
+    },
+    "x86_64-pc-windows-msvc": {
+      "signature": "dW50cnVzdGVkIGNvbW1lbnQ6IHNpZ25hdHVyZSBmcm9tIHRhdXJpIHNlY3JldCBrZXkKUlVTc2owVXR6aDRGS2thamVVREJBY3BjZHVSNzkrdjRnYzlrT0E3VGZyMHFtc3cveDJEWDhNa3NSUkJEMVVzNXBhTTRvTDJjVjhZS1ZyanhJOXgyVkVDK2U2MjhBK3NpbUFjPQp0cnVzdGVkIGNvbW1lbnQ6IHRpbWVzdGFtcDoxNzgyMzgwNzk1CWZpbGU6TmljZVNTSF8wLjQuNTRfeDY0X2VuLVVTLm1zaQpoZEI2dzhjU1IyNEpWaEdoN0daNFpSS0dmRFRvVjFuSkVlUGZhbVIvd3JmRzl2aFNjaTRHSk81Nk5XTlE2azNnNElsMFJiZ2VpdDJQR3JySTJsUGNCdz09Cg==",
+      "url": "https://github.com/e9ab98/NiceSSH/releases/download/v0.4.54/NiceSSH_0.4.54_x64_en-US.msi"
+    }
+  }
+}
