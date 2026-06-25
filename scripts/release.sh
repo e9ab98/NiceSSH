@@ -6,24 +6,33 @@
 #   1. fetch --tags from origin
 #   2. verify working tree clean, on main, jq present
 #   3. derive next version = last v*.*.* tag + 1 patch (or $INIT if no tags)
-#   4. rewrite 4 files in place (package.json, tauri.conf.json, Cargo.toml, release-please-manifest.json)
+#   4. check 4 source files for version drift (exit 1 if they disagree)
 #   5. print a preview block
-#   6. with --dry-run, exit 0; else commit + push main + push tag
+#   6. prompt: [1] preview  [2] release  [3] preview-diff
+#      - 1: exit 0 (no writes)
+#      - 2: rewrite 4 files → git diff → y/N → commit + push main + push tag
+#      - 3: rewrite 4 files → git diff → roll back → exit 0 (no commit, no push)
+#
+# Env vars:
+#   INIT=v0.3.4        bootstrap from a specific version (when no v* tags exist)
+#   ASSUME_YES=1       skip both menus (mode=release + final y/N); for CI wrapping
 #
 # Exit codes:
-#   0  success (or dry-run preview)
-#   1  local-state error (dirty tree, wrong branch, jq missing, last tag unparseable, etc.)
+#   0  success (or chosen preview/preview-diff completed cleanly)
+#   1  local-state error (dirty tree, wrong branch, jq missing, drift detected,
+#      tag already exists, user aborted at the final y/N, etc.)
 #   2  remote-state conflict (push rejected — developer must git pull --rebase or git fetch --tags)
 #   3  bootstrap needed (no v* tags found; rerun with INIT=v0.1.0)
 #
 set -euo pipefail
 
-DRY_RUN=0
-if [ "${1:-}" = "--dry-run" ]; then
-  DRY_RUN=1
-elif [ -n "${1:-}" ]; then
+# No positional args. All interaction is via the on-screen menu (and the
+# INIT / ASSUME_YES env vars for non-interactive bootstrap / CI wrapping).
+if [ -n "${1:-}" ]; then
   echo "::error::Unknown argument: $1" >&2
-  echo "Usage: scripts/release.sh [--dry-run]" >&2
+  echo "Usage: scripts/release.sh        # interactive menu" >&2
+  echo "       ASSUME_YES=1 scripts/release.sh   # non-interactive release" >&2
+  echo "       INIT=v0.3.4 scripts/release.sh   # first-time bootstrap" >&2
   exit 1
 fi
 
@@ -157,14 +166,14 @@ rewrite_manifest() {
   mv "$tmp" release-please-manifest.json
 }
 
-# ---- preview ------------------------------------------------------------------
+# ---- preview (text-only, no file changes yet) -------------------------------
 
 print_preview() {
   cat <<EOF
 ── Release preview ──
 next version:  ${VERSION}
 next tag:      ${TAG}
-files changed:
+files that WILL change (not yet written):
   package.json                              (${OLD_PKG} → ${VERSION})
   src-tauri/tauri.conf.json                 (${OLD_TAURI} → ${VERSION})
   src-tauri/Cargo.toml                      (${OLD_CARGO} → ${VERSION})
@@ -176,16 +185,6 @@ EOF
 
 print_preview
 
-# ---- execute (or stop on --dry-run) -------------------------------------------
-
-if [ "$DRY_RUN" = "1" ]; then
-  echo "(dry-run; no files written, no commits, no pushes)"
-  echo ""
-  echo "Re-run without --dry-run to perform the release:"
-  echo "  scripts/release.sh"
-  exit 0
-fi
-
 # Sanity: refuse to push a tag that already exists on the remote.
 if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
   echo "::error::Tag ${TAG} already exists locally; refusing to push a duplicate." >&2
@@ -194,38 +193,104 @@ if git rev-parse -q --verify "refs/tags/${TAG}" >/dev/null; then
   exit 1
 fi
 
-# We use a trap to roll back partial edits if anything fails mid-flight.
-rollback() {
-  echo "::error::Release failed mid-flight; rolling back any partial file edits." >&2
-  git checkout -- package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml release-please-manifest.json 2>/dev/null || true
-}
-trap rollback ERR
+# ---- mode selection -----------------------------------------------------------
+#
+# After every invocation the developer is asked to pick a mode. This is the
+# single point of no return; the chosen branch then runs to completion
+# without further interactive prompts (other than the y/N before commit+push,
+# which ASSUME_YES=1 can skip).
+#
+# Modes:
+#   1) preview       — no file writes, no commits, no pushes; exits 0
+#   2) release       — rewrites 4 files, shows the actual git diff, prompts
+#                       y/N, then commits + pushes main + pushes tag
+#   3) preview-diff  — same as preview, but ALSO rewrites the 4 files
+#                       temporarily, runs git diff to show the exact patch,
+#                       then rolls back. Useful for verifying awk/jq rewrites
+#                       against weird file content. No commit, no push.
 
-# Rewrite in fixed order; trap will roll back if any of them error.
+MODE=""
+if [ "${ASSUME_YES:-0}" = "1" ]; then
+  MODE="release"
+else
+  while [ -z "$MODE" ]; do
+    echo ""
+    echo "Choose a mode:"
+    echo "  1) preview        (no writes; show what would change)"
+    echo "  2) release        (rewrite 4 files + commit + push main + push ${TAG})"
+    echo "  3) preview-diff   (rewrite temporarily, show full git diff, then roll back)"
+    printf "> "
+    read -r choice
+    case "$choice" in
+      1|preview|"preview"|p|P)         MODE="preview" ;;
+      2|release|r|R)                   MODE="release" ;;
+      3|preview-diff|d|D)              MODE="preview-diff" ;;
+      *)                               echo "Invalid choice: '$choice'. Try 1, 2, or 3." ;;
+    esac
+  done
+fi
+
+echo ""
+echo "→ Mode: ${MODE}"
+
+if [ "$MODE" = "preview" ]; then
+  echo "(preview; no files written, no commits, no pushes)"
+  echo "Re-run and pick 2 when ready to actually release."
+  exit 0
+fi
+
+# ---- rewrite 4 files (shared by preview-diff and release) -------------------
+
 rewrite_pkg
 rewrite_tauri
 rewrite_cargo
 rewrite_manifest
 
-# From here on we don't want the rollback trap — the commit is the next step.
-trap - ERR
-
-# Show the diff for one last visual check before we commit.
+# Show the actual git diff (this is what the bundle filenames will be
+# produced from; verify visually before committing).
 echo ""
 echo "── git diff (4 files) ──"
 git --no-pager diff -- package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml release-please-manifest.json
 echo "────────────────────────"
 echo ""
 
+if [ "$MODE" = "preview-diff" ]; then
+  echo "→ Rolling back the 4 files (preview-diff mode). No commit, no push."
+if ! git checkout -- package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml release-please-manifest.json 2>/dev/null; then
+
+  echo '::warning::git checkout rollback failed (sandbox or unusual state). Restoring manually:'
+
+  for f in package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml release-please-manifest.json; do
+
+    [ -f "$f" ] && git checkout HEAD -- "$f" 2>/dev/null || true
+
+  done
+
+fi
+exit 0
+fi
+
+# ---- release path: confirm + commit + push ----------------------------------
+
 # Confirm with the developer. Set ASSUME_YES=1 to skip (e.g. for CI wrapping).
 if [ "${ASSUME_YES:-0}" != "1" ]; then
-  read -r -p "Commit and push? [y/N] " ans
+  read -r -p "Commit and push ${TAG}? [y/N] " ans
   case "$ans" in
     y|Y|yes|YES) ;;
     *)
       echo "Aborted by user. Rolling back file edits."
-      git checkout -- package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml release-please-manifest.json
-      exit 1
+if ! git checkout -- package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml release-please-manifest.json 2>/dev/null; then
+
+  echo '::warning::git checkout rollback failed (sandbox or unusual state). Restoring manually:'
+
+  for f in package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml release-please-manifest.json; do
+
+    [ -f "$f" ] && git checkout HEAD -- "$f" 2>/dev/null || true
+
+  done
+
+fi
+exit 1
       ;;
   esac
 fi
@@ -238,8 +303,18 @@ if ! git diff --cached --quiet; then
   git commit -m "$COMMIT_MSG"
 else
   echo "::error::No changes staged for commit; aborting before push." >&2
-  git checkout -- package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml release-please-manifest.json
-  exit 1
+if ! git checkout -- package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml release-please-manifest.json 2>/dev/null; then
+
+  echo '::warning::git checkout rollback failed (sandbox or unusual state). Restoring manually:'
+
+  for f in package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml release-please-manifest.json; do
+
+    [ -f "$f" ] && git checkout HEAD -- "$f" 2>/dev/null || true
+
+  done
+
+fi
+exit 1
 fi
 
 # Push main. If rejected, exit 2 so the developer can rebase.

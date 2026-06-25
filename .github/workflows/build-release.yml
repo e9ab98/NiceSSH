@@ -1,13 +1,13 @@
 name: Build & Publish Release
 
 on:
-  workflow_run:
-    workflows: ["Tag"]
-    types: [completed]
+  push:
+    tags:
+      - 'v*'
   workflow_dispatch:
     inputs:
       version:
-        description: 'Tag name to publish (e.g. v0.3.41). When empty, falls back to the last v*.*.* tag pushed by the Tag workflow.'
+        description: 'Tag name to publish (e.g. v0.3.41). When empty, falls back to the most recent v* tag pushed to main.'
         required: false
         default: ''
 
@@ -142,10 +142,7 @@ jobs:
     name: Publish GitHub Release
     needs: build
     if: |
-      (github.event_name == 'workflow_run' &&
-       github.event.workflow_run.name == 'Tag' &&
-       github.event.workflow_run.conclusion == 'success' &&
-       github.event.workflow_run.head_branch == 'main') ||
+      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
       (github.event_name == 'workflow_dispatch' && inputs.version != '')
     runs-on: ubuntu-22.04
     steps:
@@ -179,8 +176,11 @@ jobs:
         run: |
           if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_VERSION" ]; then
             CURRENT_TAG="$INPUT_VERSION"
+          elif [ "$EVENT_NAME" = "push" ]; then
+            # Pushed tag (workflow triggers on push tags: ['v*'])
+            CURRENT_TAG="${GITHUB_REF_NAME}"
           else
-            # Fetch tags first to make sure local tags list is up-to-date with remote
+            # Fallback: resolve the most recent v* tag locally
             git fetch --tags --force
             CURRENT_TAG=$(git tag -l "v*" --sort=-v:refname | head -1)
           fi
