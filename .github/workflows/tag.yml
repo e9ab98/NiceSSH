@@ -80,9 +80,23 @@ jobs:
           print(f"Cargo.toml: {n2} substitution(s)")
           if c2 != c:
               cargo.write_text(c2)
+          # package.json: "version": "0.3.0" -> "version": "0.3.107"
+          # (Tauri's bundler reads version from package.json, not tauri.conf.json,
+          # so without this the built bundle filenames are stuck at the old version
+          # while the release title shows the new one.)
+          pkg = pathlib.Path("package.json")
+          p = pkg.read_text()
+          p2, n3 = re.subn(
+              r'("version"\s*:\s*")0\.3\.\d+(")',
+              lambda m: m.group(1) + ver + m.group(2),
+              p, count=1)
+          print(f"package.json: {n3} substitution(s)")
+          if p2 != p:
+              pkg.write_text(p2)
           # Sanity check
           assert n1 >= 1, "tauri.conf.json version line not found / not updated"
           assert n2 >= 1, "Cargo.toml version line not found / not updated"
+          assert n3 >= 1, "package.json version line not found / not updated"
           print(f"Synced to {ver}")
           PYEOF
 
