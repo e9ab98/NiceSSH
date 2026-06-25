@@ -9,7 +9,7 @@ before it was removed in favor of explicit, local control.
 ## Quick start
 
 ```sh
-scripts/manage.sh    # top-level menu
+./manage.sh    # top-level menu
 ```
 
 ```
@@ -48,7 +48,7 @@ The full release flow. Walks you through:
      GitHub Actions picks up the new tag (build-release.yml triggers
      on `push tags: ['v*']`) and runs the build/publish pipeline.
 
-Override the major.minor with `MAJOR_MINOR=0.4 scripts/manage.sh`.
+Override the major.minor with `MAJOR_MINOR=0.4 ./manage.sh`.
 
 ### 2) Tag 管理
 
@@ -60,7 +60,7 @@ Sub-menu:
 
 Example:
 ```sh
-CONFIRM=1 scripts/manage.sh    # then pick 2 → 2
+CONFIRM=1 ./manage.sh    # then pick 2 → 2
 ```
 
 The 5-second countdown is intentional: it gives you a chance to
@@ -97,7 +97,7 @@ Read-only. Shows:
 ### Version = `MAJOR.MINOR.PATCH`
 
 `MAJOR.MINOR` is set explicitly by you (via option 3, or by hand,
-or by passing `MAJOR_MINOR=0.4 scripts/manage.sh`).
+or by passing `MAJOR_MINOR=0.4 ./manage.sh`).
 
 `PATCH` is **always derived from `git rev-list --count HEAD`** —
 the number of commits on the current branch. This is the algorithm
@@ -117,7 +117,7 @@ one**. The script protects against this (D1):
 
 | File | Role |
 |------|------|
-| `manage.sh` | Top-level menu. The one you run. |
+| `../manage.sh` (at the project root) | Top-level menu. The one you run. Lives at the repo root so that `jq` / `awk` can find the 4 source files by relative path regardless of cwd. |
 | `release.sh` | Thin wrapper around the manage.sh option-1 logic, kept for backward compatibility (and for any pre-existing CI hooks that reference it). Internally it `.`-sources `_version_files.sh` and does exactly what option 1 does. |
 | `_version_files.sh` | Shared library. Provides the 4-file read/write functions, drift check, commit-count helper, rollback helper, and preflight checks. **Do not run directly.** `.`-source it. |
 | `check-signer.sh` | (Unchanged.) Verify the Tauri updater signing key is loaded in the macOS keychain. |

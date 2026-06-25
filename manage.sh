@@ -1,18 +1,29 @@
 #!/usr/bin/env bash
 #
-# scripts/manage.sh — top-level project tool for NiceSSH.
+# manage.sh — top-level project tool for NiceSSH.
 #
 # Combines release (option 1), tag management (option 2), set-version (option 3),
 # and view-version (option 4) into a single interactive entry point.
 #
-# The 4-file version rewrite logic lives in scripts/_version_files.sh and is
-# shared with scripts/release.sh.
+# Lives in the project root so it can find package.json, Cargo.toml, etc. by
+# relative path regardless of cwd. The shared library
+# scripts/_version_files.sh is sourced relative to this script's own location.
 
 set -euo pipefail
 
-SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+# Always run from the repo root, so jq/awk find the 4 source files by relative path.
+if ! REPO_ROOT="$(git rev-parse --show-toplevel 2>/dev/null)"; then
+  echo "::error::manage.sh must be run from inside a git repository (or with a path to a repo script)." >&2
+  echo "  Current dir: $(pwd)" >&2
+  echo "  Try: cd /path/to/NiceSSH && bash manage.sh" >&2
+  exit 1
+fi
+cd "$REPO_ROOT"
+
+# Source the shared library relative to the repo root (works regardless of how
+# the script was invoked: ./manage.sh, bash manage.sh, bash /path/to/manage.sh).
 # shellcheck source=scripts/_version_files.sh
-. "$SCRIPT_DIR/_version_files.sh"
+. "${REPO_ROOT}/scripts/_version_files.sh"
 
 # ---- top-level menu ---------------------------------------------------------
 
@@ -24,7 +35,7 @@ print_menu() {
 ═══════════════════════════════════════
   1) 打 tag 发版    (改 4 文件到 next version + commit + push main + push tag)
   2) Tag 管理       (列本地 / 删本地 / 列远端 / 删远端 — 删必须 --confirm)
-  3) 修改版本号     (改 4 文件到 X.Y.Z, 你输入前 2 位, patch = commit count)
+  3) 修改版本号     (改 4 文件到 X.Y.Z 或 PATCH; 不 commit, 你自己提交)
   4) 查看版本号     (只读打印 4 文件当前 version + 下一个 next 预览)
   5) 退出
 ═══════════════════════════════════════
@@ -254,42 +265,41 @@ opt_set_version() {
   echo ""
   echo "── Option 3: 修改版本号 ──"
   echo ""
-  echo "  Format: X.Y.Z  (e.g. 0.3.5, 1.0.0, 2.1.0)"
-  echo "  Or: X.Y       (patch will be filled in as commit count on HEAD)"
-  echo "  Or: PATCH     (major.minor taken from current files, patch = commit count)"
+  echo "  This rewrites the 4 source files to your target version."
+  echo "  It does NOT commit, push, or tag — you handle that yourself."
   echo ""
-  printf "Target version (X.Y.Z / X.Y / PATCH): "
+  echo "  Formats:"
+  echo "    X.Y.Z   literal (e.g. 0.3.5, 1.0.0, 2.1.0)"
+  echo "    PATCH   use current major.minor from the 4 files; patch = commit count"
+  echo ""
+  printf "Target version (X.Y.Z / PATCH): "
   read -r input
 
-  local major_minor patch version
+  local version
   case "$input" in
     "")
       echo "Aborted."
       return 1
       ;;
     PATCH|patch|Patch)
+      local major_minor patch
       major_minor="$(get_major_minor)"
       patch="$(commit_count)"
       version="${major_minor}.${patch}"
       ;;
     *)
-      if [[ "$input" =~ ^([0-9]+)\.([0-9]+)$ ]]; then
-        major_minor="$input"
-        patch="$(commit_count)"
-        version="${major_minor}.${patch}"
-      elif [[ "$input" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+      if [[ "$input" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
         version="$input"
       else
-        echo "::error::Invalid version format: '${input}'. Use X.Y.Z, X.Y, or PATCH." >&2
+        echo "::error::Invalid version format: '${input}'. Use X.Y.Z or PATCH." >&2
         return 1
       fi
       ;;
   esac
 
-  # Pre-flight
+  # Pre-flight (no clean-tree check — the user can run this on a dirty tree
+  # if they're just trying out a value, since we don't commit anyway).
   require_jq || return 1
-  require_main_branch || return 1
-  require_clean_tree || return 1
 
   local old_pkg old_tauri old_cargo old_manifest
   old_pkg="$(read_pkg_version)"
@@ -302,28 +312,22 @@ opt_set_version() {
   echo "  package.json                              (${old_pkg} → ${version})"
   echo "  src-tauri/tauri.conf.json                 (${old_tauri} → ${version})"
   echo "  src-tauri/Cargo.toml                      (${old_cargo} → ${version})"
-  echo "  release-please-manifest.json              (${old_manifest#*:} → ${version})"
+  echo "  release-please-manifest.json              (${old_manifest} → ${version})"
   echo ""
-  printf "Commit? [y/N] "
+  printf "Apply? [y/N] "
   read -r ans
   case "$ans" in
     y|Y|yes|YES) ;;
     *) echo "Aborted; no changes made."; return 1 ;;
   esac
 
+  # Roll back on any mid-flight failure.
   trap 'echo "::error::set-version failed mid-flight; rolling back." >&2; rollback_4_files' ERR
   rewrite_4_files "$version"
   trap - ERR
 
-  git add package.json src-tauri/tauri.conf.json src-tauri/Cargo.toml release-please-manifest.json
-  if git diff --cached --quiet; then
-    echo "(version was already at ${version}; nothing to commit)"
-    return 0
-  fi
-  git commit -m "chore(version): set to ${version}"
   echo ""
-  echo "✅ Version set to ${version}"
-  echo "  Next: option 1 to push + tag, or just 'git push origin main' to publish."
+  echo "✅ Rewrote 4 files to ${version} (not committed; review with 'git diff' then commit yourself)."
 }
 
 # ---- option 4: view-version -------------------------------------------------
