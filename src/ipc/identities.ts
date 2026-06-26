@@ -16,7 +16,10 @@ export const createIdentity = (i: Omit<Identity, 'id'>) =>
   ipc<Identity>('create_identity', i as any);
 export const updateIdentity = (id: string, updated: Identity) =>
   ipc<Identity>('update_identity', { id, updated });
-export const deleteIdentity = (id: string) => ipc<void>('delete_identity', { id });
+export const deleteIdentity = (
+  id: string,
+  opts: { deleteFiles?: boolean } = {},
+) => ipc<void>('delete_identity', { id, deleteFiles: opts.deleteFiles ?? false });
 
 export type ScannedProvenanceKind = 'gitconfig_include_if' | 'ssh_key_orphan';
 

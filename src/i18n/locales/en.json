@@ -101,6 +101,15 @@
     "created": "Identity created",
     "keyGenerated": "Key generated",
     "match": "match",
+    "deleteDialogTitle": "Delete identity",
+    "deleteRecordOnly": "Remove the imported record only",
+    "deleteRecordOnlyHint": "Keep the key file on disk (you can delete it later from the SshKeys view)",
+    "deleteWithFiles": "Also delete the key file on disk",
+    "deleteWithFilesHint": "Permanently remove the private and public key — cannot be undone",
+    "deleteFileWarning": "This will permanently delete {{path}} and its public key. This cannot be undone.",
+    "deleteNoKeyPath": "This identity has no key file attached",
+    "deleted": "Identity deleted",
+    "deletedWithFiles": "Identity and key file deleted",
     "updated": "Identity updated"
   },
   "identityForm": {

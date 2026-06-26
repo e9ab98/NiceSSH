@@ -101,6 +101,15 @@
     "created": "身份已创建",
     "keyGenerated": "密钥已生成",
     "match": "匹配",
+    "deleteDialogTitle": "删除身份",
+    "deleteRecordOnly": "仅删除导入的记录",
+    "deleteRecordOnlyHint": "保留磁盘上的密钥文件(可稍后在 SshKeys 视图删除)",
+    "deleteWithFiles": "同时删除磁盘上的密钥文件",
+    "deleteWithFilesHint": "永久删除私钥与公钥,无法恢复",
+    "deleteFileWarning": "将永久删除 {{path}} 及其公钥,此操作不可撤销。",
+    "deleteNoKeyPath": "该身份没有关联的密钥文件",
+    "deleted": "身份已删除",
+    "deletedWithFiles": "身份及磁盘文件已删除",
     "updated": "身份已更新"
   },
   "identityForm": {

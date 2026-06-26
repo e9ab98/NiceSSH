@@ -1,5 +1,11 @@
 import { create } from 'zustand';
-import { Identity, listIdentities, createIdentity as apiCreate, updateIdentity as apiUpdate, deleteIdentity as apiDelete } from '../ipc/identities';
+import {
+  Identity,
+  listIdentities,
+  createIdentity as apiCreate,
+  updateIdentity as apiUpdate,
+  deleteIdentity as apiDelete,
+} from '../ipc/identities';
 
 interface State {
   items: Identity[];
@@ -7,7 +13,7 @@ interface State {
   refresh: () => Promise<void>;
   create: (i: Omit<Identity, 'id'>) => Promise<Identity>;
   update: (id: string, i: Identity) => Promise<void>;
-  remove: (id: string) => Promise<void>;
+  remove: (id: string, opts?: { deleteFiles?: boolean }) => Promise<void>;
 }
 
 export const useIdentitiesStore = create<State>((set) => ({
@@ -27,8 +33,8 @@ export const useIdentitiesStore = create<State>((set) => ({
     const updated = await apiUpdate(id, i);
     set((s) => ({ items: s.items.map((x) => (x.id === id ? updated : x)) }));
   },
-  remove: async (id) => {
-    await apiDelete(id);
+  remove: async (id, opts) => {
+    await apiDelete(id, opts);
     set((s) => ({ items: s.items.filter((x) => x.id !== id) }));
   },
 }));

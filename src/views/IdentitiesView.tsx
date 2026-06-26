@@ -4,6 +4,7 @@ import { Button } from '../components/ui/button';
 import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip';
+import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { useIdentitiesStore } from '../store/identities';
 import { IdentityFormDialog } from '../features/identityForm/IdentityFormDialog';
 import { KeyGeneratorDialog } from '../features/keyGenerator/KeyGeneratorDialog';
@@ -11,6 +12,8 @@ import { ScanResultsDialog } from '../features/scanResults/ScanResultsDialog';
 import { scanExistingIdentities, type ScannedIdentity } from '../ipc/identities';
 import { toast } from 'sonner';
 import type { Identity } from '../ipc/identities';
+
+type DeleteMode = 'record' | 'withFiles';
 
 export function IdentitiesView() {
   const { t } = useTranslation();
@@ -21,6 +24,11 @@ export function IdentitiesView() {
   const [scanOpen, setScanOpen] = useState(false);
   const [candidates, setCandidates] = useState<ScannedIdentity[]>([]);
   const [scanning, setScanning] = useState(false);
+
+  // Delete dialog state
+  const [deleting, setDeleting] = useState<Identity | null>(null);
+  const [deleteMode, setDeleteMode] = useState<DeleteMode>('record');
+  const [deleteBusy, setDeleteBusy] = useState(false);
 
   useEffect(() => { refresh(); }, [refresh]);
 
@@ -63,6 +71,34 @@ export function IdentitiesView() {
     }
   };
 
+  const openDelete = (id: Identity) => {
+    setDeleting(id);
+    setDeleteMode('record'); // safe default
+  };
+
+  const closeDelete = () => {
+    if (deleteBusy) return;
+    setDeleting(null);
+  };
+
+  const confirmDelete = async () => {
+    if (!deleting || deleteBusy) return;
+    setDeleteBusy(true);
+    const target = deleting;
+    const deleteFiles = deleteMode === 'withFiles' && target.keyPath.trim().length > 0;
+    try {
+      await remove(target.id, { deleteFiles });
+      toast.success(
+        deleteFiles ? t('identities.deletedWithFiles') : t('identities.deleted'),
+      );
+      setDeleting(null);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setDeleteBusy(false);
+    }
+  };
+
   return (
     <TooltipProvider>
       <div className="p-6 max-w-4xl">
@@ -101,7 +137,9 @@ export function IdentitiesView() {
                   <Button variant="outline" size="sm" onClick={() => setGenFor(id)}>
                     {id.keyPath.includes('id_') ? t('identities.regenerateKey') : t('identities.generateKey')}
                   </Button>
-                  <Button variant="danger" size="sm" onClick={() => { if (confirm(t('identities.deleteConfirm'))) remove(id.id); }}>{t('common.delete')}</Button>
+                  <Button variant="danger" size="sm" onClick={() => openDelete(id)}>
+                    {t('common.delete')}
+                  </Button>
                 </div>
               </div>
             </Card>
@@ -149,6 +187,93 @@ export function IdentitiesView() {
           candidates={candidates}
           onImport={handleImport}
         />
+
+        {/* Delete confirmation dialog */}
+        <Dialog
+          open={!!deleting}
+          onOpenChange={(v) => { if (!v) closeDelete(); }}
+        >
+          <DialogContent>
+            <DialogHeader>
+              <DialogTitle>{t('identities.deleteDialogTitle')}</DialogTitle>
+              <DialogDescription>
+                {deleting?.label}
+              </DialogDescription>
+            </DialogHeader>
+
+            <div className="space-y-3">
+              <label className="flex items-start gap-2 cursor-pointer rounded-md border border-border p-3 hover:bg-bg-2">
+                <input
+                  type="radio"
+                  className="mt-1"
+                  name="delete-mode"
+                  value="record"
+                  checked={deleteMode === 'record'}
+                  onChange={() => setDeleteMode('record')}
+                />
+                <div className="min-w-0">
+                  <div className="font-medium text-text-0">
+                    {t('identities.deleteRecordOnly')}
+                  </div>
+                  <div className="text-text-1 text-xs mt-0.5">
+                    {t('identities.deleteRecordOnlyHint')}
+                  </div>
+                </div>
+              </label>
+
+              <label
+                className={
+                  'flex items-start gap-2 rounded-md border p-3 ' +
+                  (deleting && deleting.keyPath.trim().length > 0
+                    ? 'border-border cursor-pointer hover:bg-bg-2'
+                    : 'border-border opacity-60 cursor-not-allowed')
+                }
+              >
+                <input
+                  type="radio"
+                  className="mt-1"
+                  name="delete-mode"
+                  value="withFiles"
+                  checked={deleteMode === 'withFiles'}
+                  disabled={!deleting || deleting.keyPath.trim().length === 0}
+                  onChange={() => setDeleteMode('withFiles')}
+                />
+                <div className="min-w-0">
+                  <div className="font-medium text-text-0">
+                    {t('identities.deleteWithFiles')}
+                  </div>
+                  <div className="text-text-1 text-xs mt-0.5">
+                    {t('identities.deleteWithFilesHint')}
+                  </div>
+                  {deleting && deleting.keyPath.trim().length > 0 ? (
+                    deleteMode === 'withFiles' ? (
+                      <div className="text-danger text-xs mt-2 break-all">
+                        {t('identities.deleteFileWarning', { path: deleting.keyPath })}
+                      </div>
+                    ) : (
+                      <div className="text-text-2 text-xs mt-2 font-mono break-all">
+                        {deleting.keyPath}
+                      </div>
+                    )
+                  ) : (
+                    <div className="text-text-2 text-xs mt-2">
+                      {t('identities.deleteNoKeyPath')}
+                    </div>
+                  )}
+                </div>
+              </label>
+            </div>
+
+            <DialogFooter>
+              <Button variant="outline" onClick={closeDelete} disabled={deleteBusy}>
+                {t('common.cancel')}
+              </Button>
+              <Button variant="danger" onClick={confirmDelete} disabled={deleteBusy}>
+                {deleteBusy ? t('common.loading') : t('common.delete')}
+              </Button>
+            </DialogFooter>
+          </DialogContent>
+        </Dialog>
       </div>
     </TooltipProvider>
   );
