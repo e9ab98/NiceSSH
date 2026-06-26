@@ -119,10 +119,18 @@
     "userName": "用户名",
     "userEmail": "邮箱",
     "keyPath": "密钥路径",
+    "labelHint": "密钥文件名,默认建议 id_<算法>(ed25519/rsa)",
+    "browseKey": "选择目录…",
+    "browseMatch": "选择目录…",
+    "matchPathHelp": "对应 ~/.gitconfig 中的 [includeIf \"gitdir:<路径>\"] 段",
     "matchPath": "匹配路径（用于 includeIf gitdir:）",
     "matchPathPlaceholder": "~/work",
     "hostAlias": "主机别名",
-    "gitHost": "Git 主机"
+    "gitHost": "Git 主机",
+    "keyPathHint": "密钥保存的目录。私钥与公钥将在此目录下创建",
+    "resetLabel": "从目录还原",
+    "labelImmutable": "创建后不可修改 —— 私钥文件、~/.gitconfig 子文件、SSH 主机块都按此名定位。",
+    "keyPathImmutable": "创建后不可修改 —— 私钥文件位于 <keyPath>/<label>。如需移动，请删除后重新创建。"
   },
   "keyGenerator": {
     "title": "生成 SSH 密钥",
@@ -161,6 +169,11 @@
       "project": "仅修改此仓库的 .git/config",
       "global": "修改 ~/.gitconfig 兜底配置，影响所有未匹配 includeIf 的仓库"
     },
+    "matchPathLabel": "匹配路径(includeIf gitdir:)",
+    "matchPathPlaceholder": "例如 ~/work/",
+    "matchPathHint": "将该目录(含子目录)下的所有仓库自动绑定到当前身份",
+    "matchPathBrowse": "选择目录…",
+    "matchPathUpdated": "已更新匹配路径",
     "globalApplied": "已将全局默认设为 {{label}}（{{email}}）"
   },
   "passphrase": {

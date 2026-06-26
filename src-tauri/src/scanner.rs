@@ -99,7 +99,12 @@ fn collect_existing_for_conflict_check() -> ExistingIdentities {
     if let Ok(cfg) = crate::config_store::read() {
         for id in &cfg.identities {
             labels.insert(id.label.to_lowercase());
-            key_paths.insert(id.key_path.to_lowercase());
+            // `key_path` may be a directory in newer records, so resolve
+            // it to the full private-key path before inserting into the
+            // conflict set. Conflict detection compares against absolute
+            // paths read from disk.
+            let full = crate::paths::resolve_key_path(&id.key_path, &id.label);
+            key_paths.insert(full.to_lowercase());
         }
     }
     ExistingIdentities { labels, key_paths }

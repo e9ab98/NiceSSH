@@ -1,7 +1,6 @@
 use crate::config_store::{self, Identity};
 use crate::error::{AppError, Result};
 use crate::paths;
-use crate::ssh_keys;
 
 #[tauri::command]
 pub fn list_identities() -> Result<Vec<Identity>> {
@@ -77,16 +76,23 @@ pub fn delete_identity(id: String, delete_files: Option<bool>) -> Result<()> {
     // validate the path *before* mutating the config store. That way
     // a rejected deletion leaves the identity record intact.
     let resolved_key = if delete_files && !target.key_path.trim().is_empty() {
-        let resolved = paths::expand_home(target.key_path.trim());
-        let ssh_root = paths::ssh_dir()?;
-        if !resolved.starts_with(&ssh_root) {
-            return Err(AppError::PermissionDenied(format!(
-                "key path {} is not inside {}",
-                resolved.display(),
-                ssh_root.display()
-            )));
+        // Resolve the full private-key path (key_path may be either a
+        // directory + label, or a legacy full file path).
+        let full = paths::resolve_key_path(&target.key_path, &target.label);
+        if full.trim().is_empty() {
+            None
+        } else {
+            let resolved = paths::expand_home(&full);
+            let ssh_root = paths::ssh_dir()?;
+            if !resolved.starts_with(&ssh_root) {
+                return Err(AppError::PermissionDenied(format!(
+                    "key path {} is not inside {}",
+                    resolved.display(),
+                    ssh_root.display()
+                )));
+            }
+            Some(resolved)
         }
-        Some(resolved)
     } else {
         None
     };
@@ -99,6 +105,12 @@ pub fn delete_identity(id: String, delete_files: Option<bool>) -> Result<()> {
     )?;
 
     if let Some(resolved) = resolved_key {
+        // `resolved` is the full private key file path. We delete the
+        // private key and (if present) the matching `<name>.pub` next to
+        // it. Files outside `~/.ssh/` are still rejected by the
+        // pre-validation above; here we just `fs::remove_file` directly
+        // instead of going through `ssh_keys::delete`, which only knows
+        // how to delete files inside `~/.ssh/`.
         let name = resolved
             .file_name()
             .and_then(|n| n.to_str())
@@ -114,14 +126,18 @@ pub fn delete_identity(id: String, delete_files: Option<bool>) -> Result<()> {
                 name
             )));
         }
-        // ssh_keys::delete returns NotFound if the file is already gone;
-        // treat that as non-fatal — the user wanted the identity gone
-        // and the file is gone too.
-        if let Err(e) = ssh_keys::delete(name) {
-            match e {
-                AppError::NotFound(_) => {}
-                other => return Err(other),
+        match std::fs::remove_file(&resolved) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
+                // already gone — non-fatal
             }
+            Err(e) => return Err(e.into()),
+        }
+        let public = resolved.with_extension("pub");
+        match std::fs::remove_file(&public) {
+            Ok(()) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(e.into()),
         }
     }
 
@@ -247,6 +263,46 @@ mod tests {
             // Identity is still present (we rejected before removing).
             let cfg = config_store::read().unwrap();
             assert!(cfg.identities.iter().any(|i| i.id == id));
+        });
+    }
+
+    #[test]
+    fn delete_true_with_directory_keypath_resolves_label() {
+        // New format: key_path is a directory. The file to delete is at
+        // <key_path>/<label>. The test sets up that layout in a custom
+        // subdirectory under ssh_dir() and verifies both files are
+        // removed.
+        with_temp_home(|| {
+            // Build a custom subdirectory inside ssh_dir() and place a
+            // key pair there.
+            let ssh_root = paths::ssh_dir().unwrap();
+            let sub = ssh_root.join("e9ab98-GitHub");
+            std::fs::create_dir_all(&sub).unwrap();
+            let priv_path = sub.join("id_work");
+            let pub_path = sub.join("id_work.pub");
+            std::fs::write(&priv_path, "fake-private").unwrap();
+            std::fs::write(&pub_path, "ssh-ed25519 AAAA fake\n").unwrap();
+
+            let mut cfg = config_store::read().unwrap_or_default();
+            let id = config_store::new_id();
+            cfg.identities.push(Identity {
+                id: id.clone(),
+                label: "id_work".into(),
+                user_name: "u".into(),
+                user_email: "u@e".into(),
+                key_path: sub.to_string_lossy().to_string(),
+                match_path: None,
+                host_alias: None,
+                git_host: None,
+            });
+            config_store::write_snapshot(&cfg, "test_seed", "seed").unwrap();
+
+            delete_identity(id.clone(), Some(true)).unwrap();
+
+            let cfg = config_store::read().unwrap();
+            assert!(cfg.identities.iter().all(|i| i.id != id));
+            assert!(!priv_path.exists(), "private key under sub dir must be removed");
+            assert!(!pub_path.exists(), "public key under sub dir must be removed");
         });
     }
 

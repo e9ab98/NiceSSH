@@ -16,7 +16,7 @@ export interface SshKeyInfo {
 }
 
 export const listKeys = () => ipc<SshKeyInfo[]>('list_keys');
-export const generateKey = (params: { name: string; keyType: string; comment: string; passphrase: string | null }) =>
+export const generateKey = (params: { name: string; keyType: string; comment: string; passphrase: string | null; dir?: string | null }) =>
   ipc<GeneratedKey>('generate_key', params);
 export const deleteKey = (name: string) => ipc<void>('delete_key', { name });
 export const getPublicKey = (name: string) => ipc<string>('get_public_key', { name });

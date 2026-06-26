@@ -12,6 +12,7 @@ import { ScanResultsDialog } from '../features/scanResults/ScanResultsDialog';
 import { scanExistingIdentities, type ScannedIdentity } from '../ipc/identities';
 import { toast } from 'sonner';
 import type { Identity } from '../ipc/identities';
+import { splitKeyPath } from '../lib/keyPath';
 
 type DeleteMode = 'record' | 'withFiles';
 
@@ -52,11 +53,22 @@ export function IdentitiesView() {
       // Skip anything that conflicts (defensive: UI already pre-deselects them)
       if (c.conflictsWithExisting || c.conflictsWithExistingKey) continue;
       try {
+        // Scanner returns the full private-key file path
+        // (e.g. `/Users/x/.ssh/id_work`). We store the *directory*
+        // portion as `keyPath` so the rest of the app can compose
+        // `<keyPath>/<label>` consistently. If the label came from the
+        // scanner already, use it as-is; otherwise fall back to the
+        // file basename via splitKeyPath.
+        const scannedPath = c.keyPath ?? '';
+        const { dir: importedDir, label: derivedLabel } = splitKeyPath(
+          scannedPath,
+          c.label,
+        );
         await create({
-          label: c.label,
+          label: c.label || derivedLabel,
           userName: c.userName ?? '',
           userEmail: c.userEmail ?? '',
-          keyPath: c.keyPath ?? '',
+          keyPath: importedDir,
           matchPath: c.matchPath,
           hostAlias: null,
           gitHost: null,
@@ -124,9 +136,9 @@ export function IdentitiesView() {
                   <div className="text-text-1 text-sm mt-1">{id.userName} &lt;{id.userEmail}&gt;</div>
                   <Tooltip>
                     <TooltipTrigger asChild>
-                      <div className="text-text-2 text-xs mt-1 font-mono truncate max-w-md">{id.keyPath}</div>
+                      <div className="text-text-2 text-xs mt-1 font-mono truncate max-w-md">{id.keyPath || ''}</div>
                     </TooltipTrigger>
-                    <TooltipContent>{id.keyPath}</TooltipContent>
+                    <TooltipContent>{id.keyPath || ''}</TooltipContent>
                   </Tooltip>
                   {id.matchPath && <div className="text-text-2 text-xs mt-0.5">{t('identities.match')}: {id.matchPath}</div>}
                 </div>
@@ -135,7 +147,7 @@ export function IdentitiesView() {
                     {t('common.edit')}
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => setGenFor(id)}>
-                    {id.keyPath.includes('id_') ? t('identities.regenerateKey') : t('identities.generateKey')}
+                    {id.label.startsWith('id_') ? t('identities.regenerateKey') : t('identities.generateKey')}
                   </Button>
                   <Button variant="danger" size="sm" onClick={() => openDelete(id)}>
                     {t('common.delete')}
@@ -173,9 +185,13 @@ export function IdentitiesView() {
           <KeyGeneratorDialog
             open={!!genFor}
             onOpenChange={(v) => !v && setGenFor(null)}
-            defaultName={genFor.keyPath.split('/').pop() || 'id_ed25519'}
+            defaultName={genFor.label || 'id_ed25519'}
+            defaultDir={genFor.keyPath || '~/.ssh/'}
             defaultComment={genFor.userEmail}
             onGenerated={async (keyPath) => {
+              // keyPath is the *directory* the key was generated into.
+              // We persist it as the identity's key directory; the
+              // filename is <label> (see IdentityFormDialog).
               await update(genFor.id, { ...genFor, keyPath });
               toast.success(t('identities.keyGenerated'));
             }}

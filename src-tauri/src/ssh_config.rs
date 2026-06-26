@@ -153,6 +153,24 @@ pub fn ensure_ssh_dir(_path: &Path) -> Result<()> {
     Ok(())
 }
 
+/// Remove every `Host` block that is `managed: true` (added by NiceSSH).
+/// Used by `reset_environment`. Preserves all user-managed blocks.
+pub fn remove_managed_blocks() -> Result<()> {
+    let path = paths::ssh_config_path()?;
+    if !path.exists() {
+        return Ok(());
+    }
+    let mut cfg = read()?;
+    let before = cfg.hosts.len();
+    cfg.hosts.retain(|h| !h.managed);
+    if cfg.hosts.len() == before {
+        return Ok(());
+    }
+    write_snapshot(&cfg, "remove_managed_blocks", "Removed all NiceSSH-managed host blocks")?;
+    Ok(())
+}
+
+
 #[cfg(test)]
 mod tests {
     use super::*;

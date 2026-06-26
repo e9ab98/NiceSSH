@@ -37,6 +37,44 @@ pub fn ssh_config_path() -> Result<PathBuf> {
     Ok(ssh_dir()?.join("config"))
 }
 
+/// Resolve the full private-key path for an identity.
+///
+/// `key_path` may be stored in one of two shapes:
+///   - a bare directory (e.g. `~/.ssh/` or `/Users/x/.ssh/e9ab98-GitHub`)
+///   - a full file path (e.g. `/Users/x/.ssh/id_work`) — legacy data.
+///
+/// We detect the legacy shape by looking at the basename: if it looks
+/// like an SSH key file (`.pub` / `.key` / `.pem` extension, well-known
+/// default name, or any `id_*` prefix) we use the stored value as-is.
+/// Otherwise we treat it as a directory and join with `label`.
+pub fn resolve_key_path(key_path: &str, label: &str) -> String {
+    let trimmed = key_path.replace(['/', '\\'], std::path::MAIN_SEPARATOR_STR);
+    let trimmed = trimmed.trim_end_matches(std::path::MAIN_SEPARATOR);
+    let basename = trimmed
+        .rsplit(std::path::MAIN_SEPARATOR)
+        .next()
+        .unwrap_or(trimmed);
+    // An empty `key_path` is not a file — return the label as the
+    // best-effort display value.
+    if key_path.is_empty() {
+        return label.to_string();
+    }
+    let looks_like_file = basename.ends_with(".pub")
+        || basename.ends_with(".key")
+        || basename.ends_with(".pem")
+        || basename.starts_with("id_");
+    if looks_like_file {
+        return key_path.to_string();
+    }
+    let sep = std::path::MAIN_SEPARATOR;
+    let dir = if key_path.ends_with(sep) || key_path.ends_with('/') {
+        key_path.to_string()
+    } else {
+        format!("{}{}", key_path, sep)
+    };
+    format!("{}{}", dir, label)
+}
+
 pub fn gitconfig_path() -> Result<PathBuf> {
     Ok(home_dir()?.join(".gitconfig"))
 }
@@ -91,6 +129,35 @@ mod tests {
             let p = expand_home("/tmp/x");
             assert_eq!(p, PathBuf::from("/tmp/x"));
         });
+    }
+
+    #[test]
+    fn test_resolve_key_path_legacy_full_path() {
+        // Legacy data: key_path is a full file path. Return as-is.
+        assert_eq!(resolve_key_path("/Users/x/.ssh/id_work", "id_work"),
+                   "/Users/x/.ssh/id_work");
+        assert_eq!(resolve_key_path("~/.ssh/id_ed25519", "id_ed25519"),
+                   "~/.ssh/id_ed25519");
+        assert_eq!(resolve_key_path("/Users/x/.ssh/legacy.pem", "anything"),
+                   "/Users/x/.ssh/legacy.pem");
+    }
+
+    #[test]
+    fn test_resolve_key_path_new_directory_with_label() {
+        // New format: key_path is a directory, join with label.
+        assert_eq!(resolve_key_path("/Users/x/.ssh/e9ab98-GitHub", "id_work"),
+                   "/Users/x/.ssh/e9ab98-GitHub/id_work");
+        assert_eq!(resolve_key_path("/Users/x/.ssh/e9ab98-GitHub/", "id_work"),
+                   "/Users/x/.ssh/e9ab98-GitHub/id_work");
+        assert_eq!(resolve_key_path("~/.ssh", "id_ed25519"),
+                   "~/.ssh/id_ed25519");
+    }
+
+    #[test]
+    fn test_resolve_key_path_empty() {
+        // Empty keyPath: return the label as-is so callers can still get
+        // a usable display string.
+        assert_eq!(resolve_key_path("", "id_ed25519"), "id_ed25519");
     }
 
     #[test]

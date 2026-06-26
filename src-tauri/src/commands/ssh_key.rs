@@ -31,16 +31,34 @@ pub fn generate_key(
     key_type: String,
     comment: String,
     passphrase: Option<String>,
+    dir: Option<String>,
 ) -> Result<GeneratedKey> {
-    let ssh_dir = paths::ssh_dir()?;
-    paths::ensure_dir(&ssh_dir)?;
+    // Resolve the target directory. When `dir` is None or empty, fall
+    // back to ~/.ssh/ for backwards compatibility with existing
+    // callers. When the caller supplies a custom directory, it must
+    // resolve to an absolute path (after expanding ~) so the resulting
+    // private key is owned by the user and chmod'd correctly.
+    let target_dir = match dir.as_deref().map(str::trim).filter(|s| !s.is_empty()) {
+        Some(d) => {
+            let p = paths::expand_home(d);
+            if !p.is_absolute() {
+                return Err(AppError::PermissionDenied(format!(
+                    "key directory {} must be an absolute path",
+                    p.display()
+                )));
+            }
+            p
+        }
+        None => paths::ssh_dir()?,
+    };
+    paths::ensure_dir(&target_dir)?;
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        std::fs::set_permissions(&ssh_dir, std::fs::Permissions::from_mode(0o700))?;
+        std::fs::set_permissions(&target_dir, std::fs::Permissions::from_mode(0o700))?;
     }
-    let private_path = ssh_dir.join(&name);
-    let public_path = ssh_dir.join(format!("{}.pub", name));
+    let private_path = target_dir.join(&name);
+    let public_path = target_dir.join(format!("{}.pub", name));
 
     let args: Vec<String> = vec![
         "-t".into(),

@@ -30,11 +30,16 @@ pub fn apply_identity_to_repo(project_id: String, identity_id: String) -> Result
             git_config::append_include_if(match_path, &identity.label)?;
         }
     }
+    // `key_path` is a directory; the actual private key is at
+    // `<key_path>/<label>`. Resolve the full file path so the
+    // per-identity gitconfig (`~/.gitconfig-<label>`) and the repo
+    // `.git/config` sshCommand both point at a real file.
+    let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
     git_config::write_identity_subfile(
         &identity.label,
         &identity.user_name,
         &identity.user_email,
-        &identity.key_path,
+        &full_key,
     )?;
     Ok(())
 }
@@ -48,9 +53,10 @@ fn write_repo_gitconfig(repo_path: &Path, identity: &Identity) -> Result<()> {
         )));
     }
     let raw = std::fs::read_to_string(&gitconfig)?;
+    let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
     let ssh_cmd = format!(
         "ssh -i {} -o IdentitiesOnly=yes",
-        identity.key_path
+        full_key
     );
     let new_block = format!(
         "\n# nicessh-managed\n[user]\n    name = {}\n    email = {}\n[core]\n    sshCommand = {}\n",
@@ -138,7 +144,8 @@ pub fn test_ssh_connection(identity_id: String) -> Result<SshTestResult> {
         .find(|i| i.id == identity_id)
         .ok_or_else(|| AppError::NotFound(format!("identity {}", identity_id)))?;
     let host = identity.git_host.as_deref().unwrap_or("github.com");
-    let key_path = paths::expand_home(&identity.key_path);
+    let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
+    let key_path = paths::expand_home(&full_key);
     let key_str = key_path.to_string_lossy();
     let args = [
         "-T",
@@ -471,7 +478,8 @@ fn build_core_sshcommand_line(ssh_cmd: &str, raw: &str) -> String {
 fn rewrite_global_defaults(raw: &str, identity: &Identity) -> String {
     let sections = parse_gitconfig_sections(raw);
 
-    let ssh_cmd = format!("ssh -i {} -o IdentitiesOnly=yes", identity.key_path);
+    let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
+    let ssh_cmd = format!("ssh -i {} -o IdentitiesOnly=yes", full_key);
 
     // Look for existing [user] and [core] sections (case-insensitive, top-level only).
     let mut user_idx: Option<usize> = None;
@@ -566,10 +574,11 @@ pub fn set_global_git_config(identity_id: String) -> Result<GlobalGitConfigChang
     )?;
     crate::fs_safety::atomic_write(&path, &new_raw, 0o644)?;
 
+    let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
     Ok(GlobalGitConfigChange {
         user_name: identity.user_name.clone(),
         user_email: identity.user_email.clone(),
-        ssh_key_path: identity.key_path.clone(),
+        ssh_key_path: full_key,
     })
 }
 
@@ -619,6 +628,23 @@ mod rewrite_tests {
         let raw = "[user]\n    name = a\n    email = a@x.com\n";
         let after = rewrite_global_defaults(raw, &ident());
         assert!(after.contains("[core]\n    sshCommand = ssh -i ~/.ssh/work_ed25519"));
+    }
+
+    #[test]
+    fn resolves_directory_keypath_with_label() {
+        // New format: key_path is a directory; the actual private key is
+        // at <key_path>/<label>. The rewritten sshCommand must point at
+        // the resolved full path, not the directory.
+        let mut id = ident();
+        id.key_path = "/Users/x/.ssh/e9ab98-GitHub".into();
+        id.label = "id_work".into();
+        let raw = "";
+        let after = rewrite_global_defaults(raw, &id);
+        assert!(
+            after.contains("sshCommand = ssh -i /Users/x/.ssh/e9ab98-GitHub/id_work"),
+            "expected resolved full key path, got:\n{}",
+            after
+        );
     }
 
     #[test]

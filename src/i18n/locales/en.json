@@ -119,10 +119,18 @@
     "userName": "User Name",
     "userEmail": "User Email",
     "keyPath": "Key Path",
+    "labelHint": "Key file name. Convention: id_<algorithm> (ed25519/rsa)",
+    "browseKey": "Browse folder…",
+    "browseMatch": "Browse folder…",
+    "matchPathHelp": "Maps to [includeIf \"gitdir:<path>\"] in ~/.gitconfig",
     "matchPath": "Match Path (for includeIf gitdir:)",
     "matchPathPlaceholder": "~/work",
     "hostAlias": "Host Alias",
-    "gitHost": "Git Host"
+    "gitHost": "Git Host",
+    "keyPathHint": "Directory where the key pair will be created",
+    "resetLabel": "Reset from folder",
+    "labelImmutable": "Cannot be changed after creation — the SSH key file, ~/.gitconfig subfile, and SSH host block all use this name.",
+    "keyPathImmutable": "Cannot be changed after creation — the SSH key file is stored at <keyPath>/<label>. Delete and recreate the identity to move it."
   },
   "keyGenerator": {
     "title": "Generate SSH Key",
@@ -161,6 +169,11 @@
       "project": "Affects only this repository's .git/config",
       "global": "Affects ~/.gitconfig default for all repos without includeIf match"
     },
+    "matchPathLabel": "Match path (includeIf gitdir:)",
+    "matchPathPlaceholder": "e.g. ~/work/",
+    "matchPathHint": "Auto-apply this identity to every repo under this folder",
+    "matchPathBrowse": "Browse folder…",
+    "matchPathUpdated": "Match path updated",
     "globalApplied": "Global default set to {{label}} ({{email}})"
   },
   "passphrase": {

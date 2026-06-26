@@ -16,6 +16,7 @@ import { IdentityFormDialog } from '../features/identityForm/IdentityFormDialog'
 import { Copy, Eye, Trash2, Pencil, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Identity } from '../ipc/identities';
+import { dirname, fullKeyPath } from '../lib/keyPath';
 
 // Match a key file (absolute path, e.g. /Users/x/.ssh/id_ed25519) against
 // an Identity.keyPath (which the user may have stored as "~/.ssh/id_ed25519"
@@ -48,7 +49,7 @@ export function SshKeysView() {
   const matchesByKey = useMemo(() => {
     const map = new Map<string, Identity[]>();
     for (const k of keys) {
-      const matches = identities.filter((id) => sameKeyFile(k.privatePath, id.keyPath));
+      const matches = identities.filter((id) => sameKeyFile(k.privatePath, fullKeyPath(id)));
       map.set(k.privatePath, matches);
     }
     return map;
@@ -191,18 +192,28 @@ export function SshKeysView() {
         />
       )}
 
-      {creating && (
-        <IdentityFormDialog
-          key={creating.privatePath}
-          open={!!creating}
-          onOpenChange={(v) => !v && setCreating(null)}
-          defaultKeyPath={creating.privatePath}
-          onSubmit={async (values) => {
-            await create({ ...values, keyPath: creating.privatePath });
-            setCreating(null);
-          }}
-        />
-      )}
+      {creating && (() => {
+        // The scanner gave us a *file* path for an existing SSH key
+        // (e.g. /Users/x/.ssh/e9ab98-GitHub/e9ab98-GitHub). The identity
+        // form stores just the *directory*, so split it here and pass
+        // the key's basename as defaultLabel. Doing it in one place keeps
+        // the dialog from having to guess the layout.
+        const dir = dirname(creating.privatePath);
+        const dirWithSlash = dir.endsWith('/') ? dir : dir + '/';
+        return (
+          <IdentityFormDialog
+            key={creating.privatePath}
+            open={!!creating}
+            onOpenChange={(v) => !v && setCreating(null)}
+            defaultKeyPath={dirWithSlash}
+            defaultLabel={creating.name}
+            onSubmit={async (values) => {
+              await create({ ...values, keyPath: dirWithSlash });
+              setCreating(null);
+            }}
+          />
+        );
+      })()}
 
       <Dialog open={!!viewingPub} onOpenChange={(v) => !v && setViewingPub(null)}>
         <DialogContent className="max-w-2xl">

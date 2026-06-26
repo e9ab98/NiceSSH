@@ -14,10 +14,14 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   defaultName: string;
   defaultComment: string;
+  // Target directory for the new key. When provided, the generated key
+  // lands at <dir>/<name>. The directory must already exist (we don't
+  // auto-create it from this dialog). Omit to fall back to ~/.ssh/.
+  defaultDir?: string;
   onGenerated: (keyPath: string, publicKey: string) => void;
 }
 
-export function KeyGeneratorDialog({ open, onOpenChange, defaultName, defaultComment, onGenerated }: Props) {
+export function KeyGeneratorDialog({ open, onOpenChange, defaultName, defaultComment, defaultDir, onGenerated }: Props) {
   const { t } = useTranslation();
   const [name, setName] = useState(defaultName);
   const defaultKeyType = useSettingsStore((s) => s.defaultKeyType);
@@ -56,11 +60,15 @@ export function KeyGeneratorDialog({ open, onOpenChange, defaultName, defaultCom
           return;
         }
       }
-      const result = await generateKey({ name, keyType, comment, passphrase: passphrase || null });
+      const result = await generateKey({ name, keyType, comment, passphrase: passphrase || null, dir: defaultDir ?? null });
       try { await writeText(result.publicKey); } catch { /* clipboard may not be available in dev */ }
       setPublicKey(result.publicKey);
       setFingerprint(result.fingerprint);
-      onGenerated(name.startsWith('~/') ? name : `~/.ssh/${name}`, result.publicKey);
+      const resolvedDir = defaultDir && defaultDir.trim().length > 0
+        ? defaultDir
+        : '~/.ssh/';
+      const dirWithSlash = resolvedDir.endsWith('/') ? resolvedDir : resolvedDir + '/';
+      onGenerated(dirWithSlash, result.publicKey);
       toast.success(t('keyGenerator.success'));
     } finally {
       setSubmitting(false);

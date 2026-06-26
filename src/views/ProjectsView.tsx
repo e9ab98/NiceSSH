@@ -17,6 +17,7 @@ import { ContextMenu } from '../components/ContextMenu';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import type { Identity } from '../ipc/identities';
+import { fullKeyPath } from '../lib/keyPath';
 
 type DetectedIdentity =
   | { kind: 'none' }
@@ -33,7 +34,7 @@ function detectIdentity(
     if (found) return { kind: 'tracked', identity: found, source: 'config' };
   }
   if (repoConfig?.sshKeyPath) {
-    const match = identities.find((i) => i.keyPath === repoConfig.sshKeyPath);
+    const match = identities.find((i) => fullKeyPath(i) === repoConfig.sshKeyPath);
     if (match) return { kind: 'tracked', identity: match, source: 'git' };
     return { kind: 'untracked', keyPath: repoConfig.sshKeyPath };
   }
@@ -183,13 +184,13 @@ export function ProjectsView() {
     }
     const target = identities.find((i) => i.id === targetIdentityId);
     if (!target) return;
-    if (!recentlyUnlocked[target.keyPath]) {
+    const fullKp = fullKeyPath(target); if (!recentlyUnlocked[fullKp]) {
       setSwitcherOpen(false);
-      const encrypted = await isKeyEncrypted(target.keyPath);
+      const encrypted = await isKeyEncrypted(fullKp);
       if (!encrypted) {
-        const ok = await tryUnlockKey(target.keyPath, '');
+        const ok = await tryUnlockKey(fullKp, '');
         if (ok) {
-          markKeyUnlocked(target.keyPath);
+          markKeyUnlocked(fullKp);
           await performSwitch(targetIdentityId);
           return;
         }
@@ -204,9 +205,9 @@ export function ProjectsView() {
 
   const handleUnlock = async (passphrase: string): Promise<boolean> => {
     if (!pendingIdentity) return false;
-    const ok = await tryUnlockKey(pendingIdentity.keyPath, passphrase);
+    const ok = await tryUnlockKey(fullKeyPath(pendingIdentity), passphrase);
     if (ok) {
-      markKeyUnlocked(pendingIdentity.keyPath);
+      markKeyUnlocked(fullKeyPath(pendingIdentity));
       if (selected) {
         await performSwitch(pendingIdentity.id);
       }
@@ -347,13 +348,14 @@ export function ProjectsView() {
           onOpenChange={setSwitcherOpen}
           identities={identities}
           currentId={selected?.identityId ?? null}
+          projectPath={selected?.path ?? null}
           onSelect={handleSelect}
         />
         {pendingIdentity && (
           <PassphraseDialog
             open={passOpen}
             onOpenChange={(v) => { if (!v) setPendingIdentityId(null); }}
-            keyPath={pendingIdentity.keyPath}
+            keyPath={fullKeyPath(pendingIdentity)}
             onUnlock={handleUnlock}
           />
         )}

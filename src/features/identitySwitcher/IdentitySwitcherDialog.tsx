@@ -1,10 +1,13 @@
 import { useEffect, useState } from 'react';
 import { useTranslation } from 'react-i18next';
+import { open as openDialog } from '@tauri-apps/plugin-dialog';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { Button } from '../../components/ui/button';
+import { Input, Label } from '../../components/ui/input';
 import { Badge } from '../../components/ui/badge';
 import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
 import { setGlobalGitConfig, getGlobalGitConfig } from '../../ipc/git';
+import { updateIdentity } from '../../ipc/identities';
 import { toast } from 'sonner';
 import { cn } from '../../lib/utils';
 import type { Identity } from '../../ipc/identities';
@@ -16,17 +19,34 @@ interface Props {
   onOpenChange: (v: boolean) => void;
   identities: Identity[];
   currentId: string | null;
+  // Path of the project the user is binding. Used as the default value
+  // for the matchPath input (so by default the project path itself
+  // becomes the includeIf gitdir prefix).
+  projectPath?: string | null;
   onSelect: (id: string) => Promise<void> | void;
 }
 
-export function IdentitySwitcherDialog({ open, onOpenChange, identities, currentId, onSelect }: Props) {
+function dirname(p: string): string {
+  if (!p) return '';
+  const trimmed = p.replace(/\/+$/, '');
+  const idx = Math.max(trimmed.lastIndexOf('/'), trimmed.lastIndexOf('\\'));
+  return idx >= 0 ? trimmed.slice(0, idx + 1) : '';
+}
+
+export function IdentitySwitcherDialog({ open, onOpenChange, identities, currentId, projectPath, onSelect }: Props) {
   const { t } = useTranslation();
   const [scope, setScope] = useState<Scope>('project');
   const [busy, setBusy] = useState(false);
   const [globalIdentityId, setGlobalIdentityId] = useState<string | null>(null);
+  // The match path input mirrors `currentId`'s identity.matchPath when
+  // the dialog opens so the user can edit it before confirming the bind.
+  // We store it as raw user input (not normalized) and only normalize
+  // at submit time.
+  const [matchPathInput, setMatchPathInput] = useState<string>('');
 
   // When the dialog opens, fetch the current global identity so we can
-  // highlight it in the list under "Global" scope.
+  // highlight it in the list under "Global" scope. Also seed the
+  // matchPath input from the currently-bound identity (or project path).
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -34,21 +54,47 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
       try {
         const cfg = await getGlobalGitConfig();
         if (cancelled || !cfg.sshKeyPath) return;
-        // Match global identity by key path (heuristic — we don't have a direct id)
         const match = identities.find((i) => i.keyPath === cfg.sshKeyPath);
         if (match) setGlobalIdentityId(match.id);
       } catch {
         // ignore — best-effort
       }
     })();
+    // Seed match path from the currently-bound identity, falling back
+    // to the project directory.
+    const current = identities.find((i) => i.id === currentId);
+    const seed = current?.matchPath?.trim()
+      || (projectPath ? dirname(projectPath) : '')
+      || '';
+    setMatchPathInput(seed);
     return () => { cancelled = true; };
-  }, [open, identities]);
+  }, [open, currentId, identities, projectPath]);
 
   const handleSelect = async (id: string) => {
     if (busy) return;
     setBusy(true);
     try {
       if (scope === 'project') {
+        // Persist the matchPath back to the identity *before* applying
+        // it, so applyIdentityToRepo can read the latest value.
+        const current = identities.find((i) => i.id === id);
+        const normalized = matchPathInput.trim() || null;
+        if (current && (current.matchPath ?? null) !== normalized) {
+          try {
+            const updated = await updateIdentity(id, { ...current, matchPath: normalized });
+            // Reflect locally so handleSelect's onSelect sees the new value
+            // and so the list re-renders. (The store will refresh on the
+            // caller's next listIdentities.)
+            current.matchPath = normalized;
+            // Surface the change in case the caller doesn't toast it.
+            toast.success(t('identitySwitcher.matchPathUpdated'));
+            // Use the updated identity in case the parent cares
+            void updated;
+          } catch (e) {
+            toast.error(String(e));
+            return; // don't proceed with applyIdentityToRepo if the write failed
+          }
+        }
         await onSelect(id);
         onOpenChange(false);
       } else {
@@ -70,6 +116,23 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
     }
   };
 
+  const browseMatchDir = async () => {
+    try {
+      const picked = await openDialog({
+        directory: true,
+        multiple: false,
+        defaultPath: projectPath || undefined,
+      });
+      if (typeof picked === 'string' && picked.length > 0) {
+        // Use the directory itself (strip filename if any) as the match path.
+        const dir = dirname(picked) || (picked.endsWith('/') ? picked : picked + '/');
+        setMatchPathInput(dir);
+      }
+    } catch {
+      // user cancelled — ignore
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -88,7 +151,26 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
             : t('identitySwitcher.scopeHint.global')}
         </p>
 
-        <div className="space-y-2 max-h-[50vh] overflow-y-auto">
+        {scope === 'project' && (
+          <div className="space-y-1">
+            <Label htmlFor="matchPath">{t('identitySwitcher.matchPathLabel')}</Label>
+            <div className="flex gap-2">
+              <Input
+                id="matchPath"
+                value={matchPathInput}
+                onChange={(e) => setMatchPathInput(e.target.value)}
+                placeholder={t('identitySwitcher.matchPathPlaceholder')}
+                className="flex-1"
+              />
+              <Button type="button" variant="outline" onClick={browseMatchDir}>
+                {t('identitySwitcher.matchPathBrowse')}
+              </Button>
+            </div>
+            <div className="text-text-2 text-xs">{t('identitySwitcher.matchPathHint')}</div>
+          </div>
+        )}
+
+        <div className="space-y-2 max-h-[40vh] overflow-y-auto">
           {identities.length === 0 && (
             <div className="text-text-1 text-sm py-4 text-center">{t('identitySwitcher.empty')}</div>
           )}
@@ -111,7 +193,7 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
                   {isCurrent && <Badge variant="outline">{t('common.current')}</Badge>}
                 </div>
                 <div className="text-text-1 text-xs mt-1">{id.userEmail}</div>
-                <div className="text-text-2 text-xs mt-0.5 font-mono">{id.keyPath}</div>
+                <div className="text-text-2 text-xs mt-0.5 font-mono truncate">{id.keyPath || ''}</div>
               </button>
             );
           })}
