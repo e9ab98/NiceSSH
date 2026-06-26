@@ -28,7 +28,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 - [Update] In-app auto-update flow (Tauri updater plugin, signature-verified). On startup (≤24h cache, opt-out toggle in Settings), the app checks the GitHub release endpoint and shows a one-time toast per new version. Settings → Updates has a new tab with current/latest version, "Check now", "Update now" (download + progress + manual close-and-reopen to apply), and a notify toggle. Release pipeline (`release.yml`) requires `TAURI_SIGNING_PRIVATE_KEY` and `TAURI_SIGNING_PRIVATE_KEY_PASSWORD` secrets at publish time; the secret check is the first step of the release job, so unsigned releases fail closed (AC6). Pre-1.0.0 caveat: macOS Gatekeeper and Windows SmartScreen still prompt on first open of an auto-updated build (same as a manual download; notarization is v1.0.0 work). Linux `.deb`/`.rpm` updates require root; AppImage is the recommended auto-update channel. Implementation: G1–G5 / AC1–AC12 / R-1..R-8 in `docs/superpowers/specs/2026-06-18-v030-auto-update-design.md`. **First-release note**: the per-binary signing + `latest.json` generation in CI lands in v0.3.1, so this v0.3.0 binary does not yet receive in-app update prompts on subsequent runs. v0.3.0 → v0.3.1 is the first e2e in-app update path; the framework (code, tests, Settings UI, CI secret check) is all in place and exercised locally.
 ### Planned
-- v0.2.0 — Settings polish, log viewer UI, keyboard shortcuts
+- v0.2.0a — Settings polish (default key type, key stats)
+- v0.2.0b — Log viewer UI
+- v0.2.0c — Keyboard shortcuts
 
 - v0.3.x — SSH config editor (visual editor for Host blocks, Match, Include — baseline add/edit first, then rich directives)
 - v1.0.0 — macOS notarization, Windows code signing, performance polish

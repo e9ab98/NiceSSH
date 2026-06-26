@@ -34,6 +34,98 @@ pub fn upsert_github_host_block(
     Ok(())
 }
 
+/// Add a new managed Host block. Returns the freshly created block.
+#[tauri::command]
+pub fn add_managed_host_block(
+    label: String,
+    is_match: bool,
+    directives: Vec<(String, String)>,
+) -> Result<HostBlock> {
+    let mut cfg = ssh_config::read()?;
+    if cfg.hosts.iter().any(|h| h.label == label) {
+        return Err(crate::error::AppError::Io(format!(
+            "A block with label '{}' already exists",
+            label
+        )));
+    }
+    let block = HostBlock {
+        label: label.clone(),
+        is_match,
+        directives,
+        managed: true,
+        start_line: 0,
+        end_line: 0,
+    };
+    cfg.hosts.push(block.clone());
+    ssh_config::write_snapshot(
+        &cfg,
+        "add_managed_host_block",
+        &format!("Added managed {} block: {}", if is_match { "Match" } else { "Host" }, label),
+    )?;
+    Ok(block)
+}
+
+/// Update an existing managed Host block. Looks up by current label so
+/// renaming a block is atomic in one call (rename + directive change).
+#[tauri::command]
+pub fn update_managed_host_block(
+    current_label: String,
+    new_label: String,
+    is_match: bool,
+    directives: Vec<(String, String)>,
+) -> Result<HostBlock> {
+    let mut cfg = ssh_config::read()?;
+    let idx = cfg
+        .hosts
+        .iter()
+        .position(|h| h.label == current_label && h.managed)
+        .ok_or_else(|| {
+            crate::error::AppError::NotFound(format!(
+                "managed block '{}' not found",
+                current_label
+            ))
+        })?;
+    let updated = HostBlock {
+        label: new_label.clone(),
+        is_match,
+        directives,
+        managed: true,
+        start_line: 0,
+        end_line: 0,
+    };
+    cfg.hosts[idx] = updated.clone();
+    ssh_config::write_snapshot(
+        &cfg,
+        "update_managed_host_block",
+        &format!("Updated managed block: {} -> {}", current_label, new_label),
+    )?;
+    Ok(updated)
+}
+
+/// Delete a managed Host block. Refuses to delete non-managed blocks
+/// because that would destroy user-written bytes.
+#[tauri::command]
+pub fn delete_managed_host_block(label: String) -> Result<()> {
+    let mut cfg = ssh_config::read()?;
+    let idx = cfg
+        .hosts
+        .iter()
+        .position(|h| h.label == label && h.managed)
+        .ok_or_else(|| {
+            crate::error::AppError::NotFound(format!(
+                "managed block '{}' not found",
+                label
+            ))
+        })?;
+    cfg.hosts.remove(idx);
+    ssh_config::write_snapshot(
+        &cfg,
+        "delete_managed_host_block",
+        &format!("Deleted managed block: {}", label),
+    )?;
+    Ok(())
+}
+
 #[derive(Debug, serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct ValidateResult {

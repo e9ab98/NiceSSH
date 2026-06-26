@@ -173,7 +173,15 @@
     "empty": "No SSH keys found in ~/.ssh/",
     "unlinked": "No identity linked",
     "createIdentity": "Create identity",
-    "linkedIdentities_other": "+{{count}} more identities linked (manage in Identities view)"
+    "linkedIdentities_other": "+{{count}} more identities linked (manage in Identities view)",
+    "viewTitle": "Public key — {{name}}",
+    "view": "View public key",
+    "copy": "Copy public key",
+    "delete": "Delete key",
+    "deleteConfirm": "Permanently delete {{name}} from ~/.ssh/? This cannot be undone.",
+    "copied": "Public key copied to clipboard",
+    "deleted": "Key deleted",
+    "noPubKey": "No public key file (only private key present)"
   },
   "sshConfig": {
     "title": "SSH Config",
@@ -181,7 +189,12 @@
     "valid": "Config is valid",
     "invalid": "Config has errors",
     "empty": "~/.ssh/config is empty",
-    "managed": "managed"
+    "managed": "managed",
+    "newBlock": "New block",
+    "editBlock": "Edit block",
+    "deleteBlock": "Delete block",
+    "deleteConfirm": "Delete the managed block for {{label}}? This cannot be undone (use History to revert).",
+    "deleted": "Block deleted"
   },
   "history": {
     "title": "History",
@@ -197,7 +210,8 @@
       "language": "Language",
       "logs": "Logs",
       "env": "SSH Environment",
-      "updates": "Updates"
+      "updates": "Updates",
+      "keys": "SSH Keys"
     },
     "theme": {
       "mode": "Mode",
@@ -214,7 +228,14 @@
       "clearTitle": "Clear all modification history (irreversible)",
       "clearButton": "Clear History",
       "clearConfirm": "Clear all history? This cannot be undone.",
-      "cleared": "History cleared"
+      "cleared": "History cleared",
+      "viewerTitle": "Application log",
+      "refresh": "Refresh",
+      "autoRefresh": "Auto refresh (3s)",
+      "empty": "No log output yet.",
+      "clearLogButton": "Clear log",
+      "clearLogConfirm": "Clear the application log file? This cannot be undone.",
+      "logCleared": "Log cleared"
     },
     "env": {
       "loading": "Loading…"
@@ -236,6 +257,25 @@
       "changelogLoadFailed": "Failed to load release notes.",
       "viewLatestChangelog": "View New Version Changelog",
       "viewCurrentChangelog": "View Current Version Changelog"
+    },
+    "keys": {
+      "defaultType": "Default key type for new keys",
+      "defaultTypeHint": "Pre-selected when opening the key generator",
+      "statsTitle": "Your SSH keys",
+      "statsEd25519": "Ed25519",
+      "statsRsa": "RSA",
+      "statsOther": "Other",
+      "statsTotal": "Total",
+      "statsEmpty": "No keys found in ~/.ssh",
+      "statsLoadError": "Could not load keys"
+    },
+    "shortcuts": {
+      "title": "Keyboard shortcuts",
+      "projects": "Projects view",
+      "identities": "Identities view",
+      "sshConfig": "SSH config view",
+      "history": "History view",
+      "settings": "Settings view"
     }
   },
   "scanResults": {
@@ -266,5 +306,17 @@
       "restart": "Restart to apply",
       "failed": "Update failed"
     }
+  },
+  "hostBlockEditor": {
+    "newTitle": "New SSH config block",
+    "editTitle": "Edit SSH config block",
+    "label": "Label",
+    "isMatch": "Match block",
+    "directives": "Directives",
+    "addDirective": "Add directive",
+    "removeDirective": "Remove directive",
+    "labelRequired": "A block label is required",
+    "added": "Block added",
+    "updated": "Block updated"
   }
 }

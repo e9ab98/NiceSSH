@@ -10,7 +10,7 @@ mod error;
 mod fs_safety;
 mod git_config;
 mod history;
-mod paths;
+pub mod paths;
 mod runner;
 mod ssh_config;
 mod ssh_keys;
@@ -18,7 +18,18 @@ mod ssh_keys;
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
-        .plugin(tauri_plugin_log::Builder::default().build())
+        .plugin(
+            tauri_plugin_log::Builder::new()
+                .target(tauri_plugin_log::Target::new(
+                    tauri_plugin_log::TargetKind::Folder {
+                        path: paths::nicessh_dir()
+                            .map(|p| p.join("logs"))
+                            .unwrap_or_else(|_| std::path::PathBuf::from("logs")),
+                        file_name: Some("nicessh".into()),
+                    },
+                ))
+                .build(),
+        )
         .plugin(tauri_plugin_clipboard_manager::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
@@ -43,6 +54,9 @@ pub fn run() {
             commands::ssh_key::is_key_encrypted,
             commands::ssh_config::get_ssh_config,
             commands::ssh_config::upsert_github_host_block,
+            commands::ssh_config::add_managed_host_block,
+            commands::ssh_config::update_managed_host_block,
+            commands::ssh_config::delete_managed_host_block,
             commands::ssh_config::validate_ssh_config,
             commands::git::is_git_repo,
             commands::git::apply_identity_to_repo,
@@ -55,6 +69,8 @@ pub fn run() {
             commands::history::rollback,
             commands::settings::check_environment,
             commands::settings::clear_history,
+            commands::log_viewer::read_log_tail,
+            commands::log_viewer::clear_log,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

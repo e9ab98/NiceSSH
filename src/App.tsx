@@ -1,8 +1,10 @@
+import { useCallback } from 'react';
 import { Toaster } from 'sonner';
 import { ThemeProvider } from './components/ThemeProvider';
 import { Sidebar } from './components/Sidebar';
-import { Route, Routes, Navigate } from 'react-router-dom';
+import { Route, Routes, Navigate, useNavigate } from 'react-router-dom';
 import { useUpdateCheck } from './hooks/useUpdateCheck';
+import { useHotkeys } from './hooks/useHotkeys';
 import { ProjectsView } from './views/ProjectsView';
 import { IdentitiesView } from './views/IdentitiesView';
 import { SshConfigView } from './views/SshConfigView';
@@ -11,6 +13,18 @@ import { SettingsView } from './views/SettingsView';
 
 export default function App() {
   useUpdateCheck();
+  const navigate = useNavigate();
+
+  // App-wide keyboard shortcuts.
+  // `mod` = Cmd on macOS, Ctrl on Windows/Linux.
+  useHotkeys({
+    'mod+1': useCallback(() => navigate('/projects'), [navigate]),
+    'mod+2': useCallback(() => navigate('/identities'), [navigate]),
+    'mod+3': useCallback(() => navigate('/config'), [navigate]),
+    'mod+4': useCallback(() => navigate('/history'), [navigate]),
+    'mod+,': useCallback(() => navigate('/settings'), [navigate]),
+  });
+
   return (
     <ThemeProvider>
       <Toaster richColors position="bottom-right" />

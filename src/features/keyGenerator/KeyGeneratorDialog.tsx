@@ -5,6 +5,8 @@ import { Input, Label } from '../../components/ui/input';
 import { Button } from '../../components/ui/button';
 import { generateKey, sshKeyExists } from '../../ipc/sshKeys';
 import { writeText } from '@tauri-apps/plugin-clipboard-manager';
+import { useSettingsStore } from '../../store/settings';
+import type { KeyType } from '../../store/settings';
 import { toast } from 'sonner';
 
 interface Props {
@@ -18,7 +20,8 @@ interface Props {
 export function KeyGeneratorDialog({ open, onOpenChange, defaultName, defaultComment, onGenerated }: Props) {
   const { t } = useTranslation();
   const [name, setName] = useState(defaultName);
-  const [keyType, setKeyType] = useState('ed25519');
+  const defaultKeyType = useSettingsStore((s) => s.defaultKeyType);
+  const [keyType, setKeyType] = useState<KeyType>(defaultKeyType);
   const [comment, setComment] = useState(defaultComment);
   const [passphrase, setPassphrase] = useState('');
   const [submitting, setSubmitting] = useState(false);
@@ -94,7 +97,7 @@ export function KeyGeneratorDialog({ open, onOpenChange, defaultName, defaultCom
               <select
                 id="ktype"
                 value={keyType}
-                onChange={(e) => setKeyType(e.target.value)}
+                onChange={(e) => setKeyType(e.target.value as KeyType)}
                 className="w-full h-9 rounded-md border border-border bg-bg-0 px-3 text-sm text-text-0"
               >
                 <option value="ed25519">{t('keyGenerator.keyTypeEd25519')}</option>

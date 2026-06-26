@@ -3,6 +3,7 @@ import i18n from '../i18n';
 import type { Locale } from '../i18n';
 
 type Mode = 'light' | 'dark' | 'system';
+export type KeyType = 'ed25519' | 'rsa';
 
 interface SettingsState {
   theme: Mode;
@@ -12,6 +13,8 @@ interface SettingsState {
   recentlyUnlockedKeys: Record<string, true>;
   markKeyUnlocked: (keyPath: string) => void;
   clearUnlocked: () => void;
+  defaultKeyType: KeyType;
+  setDefaultKeyType: (t: KeyType) => void;
 }
 
 function readPersistedTheme(): Mode {
@@ -24,6 +27,12 @@ function readPersistedLocale(): Locale {
   const v = localStorage.getItem('nicessh-locale');
   if (v === 'en' || v === 'zh-CN') return v;
   return 'en';
+}
+
+function readPersistedDefaultKeyType(): KeyType {
+  const v = localStorage.getItem('nicessh-default-key-type');
+  if (v === 'rsa') return 'rsa';
+  return 'ed25519';
 }
 
 export const useSettingsStore = create<SettingsState>((set) => ({
@@ -47,4 +56,9 @@ export const useSettingsStore = create<SettingsState>((set) => ({
   markKeyUnlocked: (keyPath) =>
     set((s) => ({ recentlyUnlockedKeys: { ...s.recentlyUnlockedKeys, [keyPath]: true } })),
   clearUnlocked: () => set({ recentlyUnlockedKeys: {} }),
+  defaultKeyType: readPersistedDefaultKeyType(),
+  setDefaultKeyType: (t) => {
+    localStorage.setItem('nicessh-default-key-type', t);
+    set({ defaultKeyType: t });
+  },
 }));

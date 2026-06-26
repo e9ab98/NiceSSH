@@ -173,7 +173,15 @@
     "empty": "在 ~/.ssh/ 中没有找到 SSH 密钥",
     "unlinked": "未关联身份",
     "createIdentity": "创建身份",
-    "linkedIdentities_other": "还关联了 {{count}} 个身份(在\"身份\"页面管理)"
+    "linkedIdentities_other": "还关联了 {{count}} 个身份(在\"身份\"页面管理)",
+    "viewTitle": "公钥 — {{name}}",
+    "view": "查看公钥",
+    "copy": "复制公钥",
+    "delete": "删除密钥",
+    "deleteConfirm": "永久删除 {{name}}?此操作不可撤销。",
+    "copied": "公钥已复制到剪贴板",
+    "deleted": "密钥已删除",
+    "noPubKey": "无对应公钥文件(只有私钥)"
   },
   "sshConfig": {
     "title": "SSH 配置",
@@ -181,7 +189,12 @@
     "valid": "配置正确",
     "invalid": "配置有错误",
     "empty": "~/.ssh/config 为空",
-    "managed": "托管"
+    "managed": "托管",
+    "newBlock": "新建块",
+    "editBlock": "编辑块",
+    "deleteBlock": "删除块",
+    "deleteConfirm": "删除托管块 {{label}}?此操作不可撤销(可在历史中回滚)。",
+    "deleted": "块已删除"
   },
   "history": {
     "title": "历史",
@@ -197,7 +210,8 @@
       "language": "语言",
       "logs": "日志",
       "env": "SSH 环境",
-      "updates": "更新"
+      "updates": "更新",
+      "keys": "SSH 密钥"
     },
     "theme": {
       "mode": "模式",
@@ -214,7 +228,14 @@
       "clearTitle": "清空所有修改历史（不可恢复）",
       "clearButton": "清空历史",
       "clearConfirm": "清空所有历史？该操作不可撤销。",
-      "cleared": "历史已清空"
+      "cleared": "历史已清空",
+      "viewerTitle": "应用日志",
+      "refresh": "刷新",
+      "autoRefresh": "自动刷新(3秒)",
+      "empty": "暂无日志输出",
+      "clearLogButton": "清空日志",
+      "clearLogConfirm": "清空应用日志文件?此操作不可撤销。",
+      "logCleared": "日志已清空"
     },
     "env": {
       "loading": "加载中…"
@@ -236,6 +257,25 @@
       "changelogLoadFailed": "加载更新日志失败",
       "viewLatestChangelog": "查看新版本更新日志",
       "viewCurrentChangelog": "查看当前版本更新日志"
+    },
+    "keys": {
+      "defaultType": "新建密钥的默认类型",
+      "defaultTypeHint": "打开密钥生成器时预选",
+      "statsTitle": "你的 SSH 密钥",
+      "statsEd25519": "Ed25519",
+      "statsRsa": "RSA",
+      "statsOther": "其他",
+      "statsTotal": "总计",
+      "statsEmpty": "~/.ssh 中没有密钥",
+      "statsLoadError": "无法加载密钥列表"
+    },
+    "shortcuts": {
+      "title": "键盘快捷键",
+      "projects": "项目视图",
+      "identities": "身份视图",
+      "sshConfig": "SSH 配置视图",
+      "history": "历史视图",
+      "settings": "设置视图"
     }
   },
   "scanResults": {
@@ -266,5 +306,17 @@
       "restart": "重启以应用更新",
       "failed": "升级失败"
     }
+  },
+  "hostBlockEditor": {
+    "newTitle": "新建 SSH 配置块",
+    "editTitle": "编辑 SSH 配置块",
+    "label": "标签",
+    "isMatch": "Match 块",
+    "directives": "指令",
+    "addDirective": "添加指令",
+    "removeDirective": "删除指令",
+    "labelRequired": "块标签不能为空",
+    "added": "块已添加",
+    "updated": "块已更新"
   }
 }
