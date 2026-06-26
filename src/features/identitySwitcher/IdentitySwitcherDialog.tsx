@@ -33,6 +33,35 @@ function dirname(p: string): string {
   return idx >= 0 ? trimmed.slice(0, idx + 1) : '';
 }
 
+/**
+ * Compute the initial value of the "match path" input shown in the
+ * IdentitySwitcherDialog.
+ *
+ * Priority:
+ *   1. `currentMatchPath` — the matchPath of the currently-bound identity,
+ *      if non-empty. Editing it lets the user re-bind an existing
+ *      identity to a different directory prefix.
+ *   2. `projectPath` — the path of the repo the user just opened. We
+ *      default to the repo itself (not its parent) so the resulting
+ *      `includeIf "gitdir:<repo>/"` is a valid single-repo binding.
+ *      We ensure a trailing `/` to mirror what the Rust
+ *      `git_config::append_include_if` writes.
+ *   3. Empty string — nothing to seed.
+ *
+ * Exported separately so a unit test can pin the rule.
+ */
+export function computeMatchPathSeed(
+  currentMatchPath: string | null | undefined,
+  projectPath: string | null | undefined,
+): string {
+  const trimmed = currentMatchPath?.trim();
+  if (trimmed) return trimmed;
+  if (projectPath) {
+    return projectPath.endsWith('/') ? projectPath : projectPath + '/';
+  }
+  return '';
+}
+
 export function IdentitySwitcherDialog({ open, onOpenChange, identities, currentId, projectPath, onSelect }: Props) {
   const { t } = useTranslation();
   const [scope, setScope] = useState<Scope>('project');
@@ -60,13 +89,11 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
         // ignore — best-effort
       }
     })();
-    // Seed match path from the currently-bound identity, falling back
-    // to the project directory.
+    // Seed the match path input from the currently-bound identity's
+    // matchPath, or fall back to the project's own path. See
+    // `computeMatchPathSeed` for the rule.
     const current = identities.find((i) => i.id === currentId);
-    const seed = current?.matchPath?.trim()
-      || (projectPath ? dirname(projectPath) : '')
-      || '';
-    setMatchPathInput(seed);
+    setMatchPathInput(computeMatchPathSeed(current?.matchPath, projectPath));
     return () => { cancelled = true; };
   }, [open, currentId, identities, projectPath]);
 

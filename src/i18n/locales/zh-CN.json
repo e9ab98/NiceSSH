@@ -340,5 +340,25 @@
     "labelRequired": "块标签不能为空",
     "added": "块已添加",
     "updated": "块已更新"
+  },
+  "repoAudit": {
+    "title": "项目体检",
+    "runSshTests": "同时测试 SSH 连接",
+    "project": "项目",
+    "status": "状态",
+    "identity": "身份",
+    "sshCommands": "sshCommand 行数",
+    "sshTest": "SSH 测试",
+    "action": "操作",
+    "clean": "清理",
+    "cleanNeedsIdentity": "请先绑定身份再清理该项目。",
+    "cleaned": "已清理该项目的 .git/config。",
+    "empty": "暂无项目。",
+    "summary": "{{dirty}} 脏 · {{clean}} 干净 · {{other}} 其他",
+    "sshOk": "通过",
+    "status.clean": "干净",
+    "status.dirty": "脏（多个 sshCommand 块）",
+    "status.no-config": "无 .git/config",
+    "status.no-identity": "未绑定身份"
   }
 }

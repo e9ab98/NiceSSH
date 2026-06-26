@@ -14,10 +14,36 @@ export interface RepoGitConfig {
   userEmail: string | null;
   sshKeyPath: string | null;
   managedByNicessh: boolean;
+  /// Number of `sshCommand` lines found in `.git/config`. A clean
+  /// nicessh-managed repo has exactly 1; older builds (or stray
+  /// writes) leave multiple behind, which the audit dialog flags.
+  sshCommandCount: number;
 }
 
 export const getRepoGitConfig = (path: string) =>
   ipc<RepoGitConfig>('get_repo_git_config', { path });
+
+export type RepoAuditStatus = 'clean' | 'dirty' | 'no-config' | 'no-identity';
+
+export interface RepoAudit {
+  projectId: string;
+  projectName: string;
+  projectPath: string;
+  hasConfig: boolean;
+  managedByNicessh: boolean;
+  sshCommandCount: number;
+  status: RepoAuditStatus;
+  identityId: string | null;
+  identityLabel: string | null;
+  sshTestOk: boolean | null;
+  sshTestMessage: string | null;
+}
+
+export const auditRepos = (runSshTests: boolean) =>
+  ipc<RepoAudit[]>('audit_repos', { runSshTests });
+
+export const cleanRepoGitconfig = (projectId: string) =>
+  ipc<void>('clean_repo_gitconfig', { projectId });
 
 export interface GlobalGitConfig {
   hasConfig: boolean;

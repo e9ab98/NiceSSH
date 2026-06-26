@@ -65,6 +65,8 @@ pub fn run() {
             commands::git::get_global_git_config,
             commands::git::set_global_git_config,
             commands::git::test_ssh_connection,
+            commands::git::audit_repos,
+            commands::git::clean_repo_gitconfig,
             commands::history::list_history,
             commands::history::rollback,
             commands::settings::check_environment,

@@ -187,6 +187,10 @@ pub struct RepoGitConfig {
     pub ssh_key_path: Option<String>,
     /// `true` if the [core] sshCommand block is one nicessh wrote.
     pub managed_by_nicessh: bool,
+    /// Total number of `sshCommand` lines in the file. A clean
+    /// nicessh-managed repo has exactly 1; older builds (or stray
+    /// writes) leave multiple behind.
+    pub ssh_command_count: usize,
 }
 
 /// Read the *current* git state of a repo (whatever is on disk, not what
@@ -204,12 +208,14 @@ pub fn get_repo_git_config(path: String) -> Result<RepoGitConfig> {
             user_email: None,
             ssh_key_path: None,
             managed_by_nicessh: false,
+            ssh_command_count: 0,
         });
     }
     let raw = std::fs::read_to_string(&gitconfig)?;
     let mut user_name = None;
     let mut user_email = None;
     let mut ssh_key_path = None;
+    let mut ssh_command_count = 0usize;
     let mut section = String::new();
     for line in raw.lines() {
         let trimmed = line.trim();
@@ -228,6 +234,7 @@ pub fn get_repo_git_config(path: String) -> Result<RepoGitConfig> {
             ("user", "name") => user_name = Some(v.to_string()),
             ("user", "email") => user_email = Some(v.to_string()),
             ("core", "sshcommand") => {
+                ssh_command_count += 1;
                 // `ssh -i <KEY> -o ...` — extract the key.
                 if let Some(idx) = v.find("-i ") {
                     let after = &v[idx + 3..];
@@ -248,7 +255,212 @@ pub fn get_repo_git_config(path: String) -> Result<RepoGitConfig> {
         user_email,
         ssh_key_path,
         managed_by_nicessh,
+        ssh_command_count,
     })
+}
+
+
+/// Per-project audit result returned by `audit_repos` and used by the
+/// "Audit" dialog in the UI.
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct RepoAudit {
+    pub project_id: String,
+    pub project_name: String,
+    pub project_path: String,
+    pub has_config: bool,
+    pub managed_by_nicessh: bool,
+    pub ssh_command_count: usize,
+    /// `clean` | `dirty` | `no-config` | `no-identity`
+    pub status: String,
+    pub identity_id: Option<String>,
+    pub identity_label: Option<String>,
+    /// Result of `test_ssh_connection` for the bound identity, if any.
+    pub ssh_test_ok: Option<bool>,
+    pub ssh_test_message: Option<String>,
+}
+
+/// Walk every project in config.json, classify its `.git/config`, and
+/// optionally run an SSH test against the bound identity. Used by the
+/// "Audit" button in the projects view to find dirty configs and
+/// broken identity bindings in one click.
+#[tauri::command]
+pub fn audit_repos(run_ssh_tests: Option<bool>) -> Result<Vec<RepoAudit>> {
+    let run_ssh_tests = run_ssh_tests.unwrap_or(false);
+    let cfg = config_store::read()?;
+    let mut out = Vec::with_capacity(cfg.projects.len());
+    for project in &cfg.projects {
+        let repo_cfg = match get_repo_git_config(project.path.clone()) {
+            Ok(c) => c,
+            Err(_) => RepoGitConfig::default_if_missing(),
+        };
+        let identity = project.identity_id.as_ref().and_then(|id| {
+            cfg.identities.iter().find(|i| &i.id == id)
+        });
+        let (ssh_ok, ssh_msg) = if run_ssh_tests {
+            if let Some(id) = identity {
+                match test_ssh_connection(id.id.clone()) {
+                    Ok(r) => (Some(r.ok), Some(r.message)),
+                    Err(e) => (Some(false), Some(format!("error: {e}"))),
+                }
+            } else {
+                (None, None)
+            }
+        } else {
+            (None, None)
+        };
+        let status = if !repo_cfg.has_config {
+            "no-config"
+        } else if identity.is_none() {
+            "no-identity"
+        } else if repo_cfg.ssh_command_count == 0 {
+            "dirty"
+        } else if repo_cfg.ssh_command_count == 1 && repo_cfg.managed_by_nicessh {
+            "clean"
+        } else {
+            "dirty"
+        };
+        out.push(RepoAudit {
+            project_id: project.id.clone(),
+            project_name: project.name.clone(),
+            project_path: project.path.clone(),
+            has_config: repo_cfg.has_config,
+            managed_by_nicessh: repo_cfg.managed_by_nicessh,
+            ssh_command_count: repo_cfg.ssh_command_count,
+            status: status.to_string(),
+            identity_id: identity.map(|i| i.id.clone()),
+            identity_label: identity.map(|i| i.label.clone()),
+            ssh_test_ok: ssh_ok,
+            ssh_test_message: ssh_msg,
+        });
+    }
+    Ok(out)
+}
+
+impl RepoGitConfig {
+    fn default_if_missing() -> Self {
+        Self {
+            has_config: false,
+            user_name: None,
+            user_email: None,
+            ssh_key_path: None,
+            managed_by_nicessh: false,
+            ssh_command_count: 0,
+        }
+    }
+}
+
+/// Rewrite a project's `.git/config` from scratch, keeping only git's
+/// own core/remote/branch sections and ending with a fresh
+/// `# nicessh-managed` block for the currently-bound identity.
+///
+/// This is the user's "Clean" action in the audit dialog. It removes
+/// the pile-up of legacy/anonymous managed blocks left by older
+/// NiceSSH builds and by other tools, so the file ends up in a single
+/// canonical shape.
+#[tauri::command]
+pub fn clean_repo_gitconfig(project_id: String) -> Result<()> {
+    let cfg = config_store::read()?;
+    let project = cfg
+        .projects
+        .iter()
+        .find(|p| p.id == project_id)
+        .ok_or_else(|| AppError::NotFound(format!("project {}", project_id)))?;
+    let identity = project
+        .identity_id
+        .as_ref()
+        .and_then(|id| cfg.identities.iter().find(|i| &i.id == id))
+        .ok_or_else(|| AppError::NotFound(format!(
+            "no identity bound to project {}",
+            project_id
+        )))?;
+    let repo = std::path::Path::new(&project.path);
+    let gitconfig = repo.join(".git").join("config");
+    if !gitconfig.exists() {
+        return Err(AppError::NotFound(format!(
+            "{}/.git/config",
+            repo.display()
+        )));
+    }
+    let raw = std::fs::read_to_string(&gitconfig)?;
+    // Keep sections that are clearly git's own: [core] (only the
+    // housekeeping keys git writes), [remote "..."], [branch "..."].
+    // Drop everything else (managed blocks, anonymous user/core
+    // duplicates, etc.).
+    let mut kept: Vec<String> = Vec::new();
+    let mut current: Option<String> = None;
+    let mut current_lines: Vec<String> = Vec::new();
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            // Flush previous section.
+            if let Some(name) = current.take() {
+                flush_kept_section(&name, &mut current_lines, &mut kept);
+            }
+            current = Some(rest.trim().to_string());
+            current_lines.clear();
+        } else {
+            current_lines.push(line.to_string());
+        }
+    }
+    if let Some(name) = current {
+        flush_kept_section(&name, &mut current_lines, &mut kept);
+    }
+    let prefix = if kept.is_empty() {
+        String::new()
+    } else {
+        kept.join("\n") + "\n"
+    };
+    let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
+    let ssh_cmd = format!("ssh -i {} -o IdentitiesOnly=yes", full_key);
+    let managed_block = format!(
+        "\n# nicessh-managed\n[user]\n    name = {}\n    email = {}\n[core]\n    sshCommand = {}\n",
+        identity.user_name, identity.user_email, ssh_cmd
+    );
+    let new_raw = format!("{}{}", prefix, managed_block.trim_start_matches('\n'));
+    crate::history::commit_change(
+        "clean_repo_gitconfig",
+        &format!("Cleaned .git/config for project {}", project.name),
+        std::iter::once((
+            gitconfig.to_string_lossy().to_string(),
+            crate::history::FileChange { before: raw, after: new_raw.clone() },
+        ))
+        .collect(),
+    )?;
+    crate::fs_safety::atomic_write(&gitconfig, &new_raw, 0o644)?;
+    Ok(())
+}
+
+/// Decide whether a section read from `.git/config` should be kept
+/// during a clean rewrite. We keep sections that look like git's
+/// own scaffolding: a `[core]` block with only the standard
+/// housekeeping keys git writes itself; any `[remote "..."]` or
+/// `[branch "..."]` block. Everything else is dropped.
+fn flush_kept_section(name: &str, lines: &[String], out: &mut Vec<String>) {
+    if name.starts_with("remote") || name.starts_with("branch") {
+        out.push(format!("[{}]", name));
+        out.extend(lines.iter().cloned());
+    } else if name == "core" {
+        const KEEP: &[&str] = &[
+            "repositoryformatversion",
+            "filemode",
+            "bare",
+            "logallrefupdates",
+            "ignorecase",
+            "precomposeunicode",
+        ];
+        let mut kept = Vec::new();
+        for line in lines {
+            let key = line.split('=').next().unwrap_or("").trim();
+            if KEEP.iter().any(|k| k == &key) {
+                kept.push(line.clone());
+            }
+        }
+        if !kept.is_empty() {
+            out.push("[core]".to_string());
+            out.extend(kept);
+        }
+    }
 }
 
 #[cfg(test)]

@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { open as openDirDialog } from '@tauri-apps/plugin-dialog';
 import { CircleSlash, AlertTriangle, FolderGit2, UserCircle2, MousePointer, type LucideIcon } from 'lucide-react';
@@ -11,6 +11,7 @@ import { useSettingsStore } from '../store/settings';
 import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, getGlobalGitConfig, isGitRepo, setGlobalGitConfig, type RepoGitConfig, type GlobalGitConfig } from '../ipc/git';
 import { tryUnlockKey, isKeyEncrypted } from '../ipc/sshAdd';
 import { IdentitySwitcherDialog } from '../features/identitySwitcher/IdentitySwitcherDialog';
+import { RepoAuditDialog } from '../features/repoAudit/RepoAuditDialog';
 import { PassphraseDialog } from '../features/passphraseDialog/PassphraseDialog';
 import { ConnectionTesterDialog } from '../features/connectionTester/ConnectionTesterDialog';
 import { ContextMenu } from '../components/ContextMenu';
@@ -91,6 +92,18 @@ export function ProjectsView() {
   const [globalGit, setGlobalGit] = useState<GlobalGitConfig | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; projectId: string; projectName: string } | null>(null);
   const [adding, setAdding] = useState(false);
+  const [auditOpen, setAuditOpen] = useState(false);
+  const refreshRepoConfigs = useCallback(async () => {
+    const out: Record<string, RepoGitConfig> = {};
+    for (const p of projects) {
+      try {
+        out[p.id] = await getRepoGitConfig(p.path);
+      } catch {
+        out[p.id] = { hasConfig: false, userName: null, userEmail: null, sshKeyPath: null, managedByNicessh: false, sshCommandCount: 0 };
+      }
+    }
+    setRepoConfigs(out);
+  }, [projects]);
 
   useEffect(() => { refreshProjects(); refreshIdentities(); }, []);
 
@@ -106,7 +119,7 @@ export function ProjectsView() {
         try {
           out[p.id] = await getRepoGitConfig(p.path);
         } catch {
-          out[p.id] = { hasConfig: false, userName: null, userEmail: null, sshKeyPath: null, managedByNicessh: false };
+          out[p.id] = { hasConfig: false, userName: null, userEmail: null, sshKeyPath: null, managedByNicessh: false, sshCommandCount: 0 };
         }
       }
       if (!cancelled) setRepoConfigs(out);
@@ -279,6 +292,9 @@ export function ProjectsView() {
               <Button onClick={handleAdd} disabled={adding}>
                 {adding ? t('common.adding') : t('projects.addProject')}
               </Button>
+          <Button variant="outline" onClick={() => setAuditOpen(true)}>
+            {t('repoAudit.title')}
+          </Button>
             </div>
             <div className="flex-1 rounded-2xl border border-border bg-bg-1 shadow-card overflow-y-auto">
               {projects.length === 0 ? (
@@ -350,6 +366,11 @@ export function ProjectsView() {
           currentId={selected?.identityId ?? null}
           projectPath={selected?.path ?? null}
           onSelect={handleSelect}
+        />
+        <RepoAuditDialog
+          open={auditOpen}
+          onOpenChange={setAuditOpen}
+          onChanged={refreshRepoConfigs}
         />
         {pendingIdentity && (
           <PassphraseDialog

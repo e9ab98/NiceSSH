@@ -340,5 +340,25 @@
     "labelRequired": "A block label is required",
     "added": "Block added",
     "updated": "Block updated"
+  },
+  "repoAudit": {
+    "title": "Repository Audit",
+    "runSshTests": "Also test SSH connections",
+    "project": "Project",
+    "status": "Status",
+    "identity": "Identity",
+    "sshCommands": "sshCommand lines",
+    "sshTest": "SSH test",
+    "action": "Action",
+    "clean": "Clean",
+    "cleanNeedsIdentity": "Bind an identity before cleaning this project.",
+    "cleaned": "Project's .git/config has been cleaned.",
+    "empty": "No projects yet.",
+    "summary": "{{dirty}} dirty · {{clean}} clean · {{other}} other",
+    "sshOk": "OK",
+    "status.clean": "Clean",
+    "status.dirty": "Dirty (multiple sshCommand blocks)",
+    "status.no-config": "No .git/config",
+    "status.no-identity": "No identity bound"
   }
 }
