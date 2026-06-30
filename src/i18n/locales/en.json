@@ -32,7 +32,8 @@
     "unlock": "Unlock",
     "unlocking": "Unlocking…",
     "generate": "Generate",
-    "generating": "Generating…"
+    "generating": "Generating…",
+    "refresh": "Refresh"
   },
   "projects": {
     "title": "Projects",
@@ -347,7 +348,7 @@
     "project": "Project",
     "status": "Status",
     "identity": "Identity",
-    "sshCommands": "sshCommand lines",
+    "sshCommands": "sshCmds",
     "sshTest": "SSH test",
     "action": "Action",
     "clean": "Clean",

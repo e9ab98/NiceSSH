@@ -46,8 +46,11 @@ export function RepoAuditDialog({ open, onOpenChange, onChanged }: Props) {
   useEffect(() => {
     if (!open) return;
     refresh(runSsh);
+    // Only auto-refresh on dialog open. Toggling the SSH checkbox
+    // does NOT trigger a refresh — the user must click Refresh
+    // (or reopen the dialog) to actually run the SSH tests.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [open, runSsh]);
+  }, [open]);
 
   const dirty = rows?.filter((r) => r.status === 'dirty') ?? [];
   const clean = rows?.filter((r) => r.status === 'clean') ?? [];
@@ -70,7 +73,7 @@ export function RepoAuditDialog({ open, onOpenChange, onChanged }: Props) {
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent className="max-w-4xl">
         <DialogHeader>
           <DialogTitle>{t('repoAudit.title')}</DialogTitle>
         </DialogHeader>
@@ -95,15 +98,15 @@ export function RepoAuditDialog({ open, onOpenChange, onChanged }: Props) {
           ) : rows.length === 0 ? (
             <div className="p-6 text-center text-text-2 text-sm">{t('repoAudit.empty')}</div>
           ) : (
-            <table className="w-full text-sm">
+            <table className="w-full text-sm table-fixed">
               <thead className="bg-bg-2 text-text-2 text-xs">
                 <tr>
-                  <th className="text-left p-2 font-medium">{t('repoAudit.project')}</th>
-                  <th className="text-left p-2 font-medium">{t('repoAudit.status')}</th>
-                  <th className="text-left p-2 font-medium">{t('repoAudit.identity')}</th>
-                  <th className="text-left p-2 font-medium">{t('repoAudit.sshCommands')}</th>
-                  <th className="text-left p-2 font-medium">{t('repoAudit.sshTest')}</th>
-                  <th className="text-right p-2 font-medium">{t('repoAudit.action')}</th>
+                  <th className="text-left p-2 font-medium whitespace-nowrap w-[34%]">{t('repoAudit.project')}</th>
+                  <th className="text-left p-2 font-medium whitespace-nowrap w-32">{t('repoAudit.status')}</th>
+                  <th className="text-left p-2 font-medium whitespace-nowrap w-40">{t('repoAudit.identity')}</th>
+                  <th className="text-left p-2 font-medium whitespace-nowrap w-28" title={t('repoAudit.sshCommands')}>{t('repoAudit.sshCommands')}</th>
+                  <th className="text-left p-2 font-medium whitespace-nowrap w-28">{t('repoAudit.sshTest')}</th>
+                  <th className="text-right p-2 font-medium whitespace-nowrap w-24">{t('repoAudit.action')}</th>
                 </tr>
               </thead>
               <tbody>
@@ -117,7 +120,9 @@ export function RepoAuditDialog({ open, onOpenChange, onChanged }: Props) {
                       <Badge variant={statusVariant(r.status)}>{t(`repoAudit.status.${r.status}`)}</Badge>
                     </td>
                     <td className="p-2 text-text-1">
-                      {r.identityLabel ?? <span className="text-text-2">—</span>}
+                      {r.identityLabel ?? (
+                        <Badge variant="warning">{t('repoAudit.status.no-identity')}</Badge>
+                      )}
                     </td>
                     <td className="p-2 font-mono text-xs">{r.sshCommandCount}</td>
                     <td className="p-2 text-text-1 text-xs">

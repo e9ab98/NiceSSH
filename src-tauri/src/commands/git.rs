@@ -294,9 +294,17 @@ pub fn audit_repos(run_ssh_tests: Option<bool>) -> Result<Vec<RepoAudit>> {
             Ok(c) => c,
             Err(_) => RepoGitConfig::default_if_missing(),
         };
-        let identity = project.identity_id.as_ref().and_then(|id| {
+        let identity = if let Some(id) = project.identity_id.as_ref() {
             cfg.identities.iter().find(|i| &i.id == id)
-        });
+        } else {
+            // No explicit binding — fall back to includeIf auto-match,
+            // matching what ProjectsView's detail panel shows.
+            match git_config::find_include_if_for_path(&project.path) {
+                Ok(Some(label)) => cfg.identities.iter().find(|i| i.label == label),
+                Ok(None) => None,
+                Err(_) => None,
+            }
+        };
         let (ssh_ok, ssh_msg) = if run_ssh_tests {
             if let Some(id) = identity {
                 match test_ssh_connection(id.id.clone()) {

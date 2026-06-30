@@ -32,7 +32,8 @@
     "unlock": "解锁",
     "unlocking": "解锁中…",
     "generate": "生成",
-    "generating": "生成中…"
+    "generating": "生成中…",
+    "refresh": "刷新"
   },
   "projects": {
     "title": "项目",
@@ -347,7 +348,7 @@
     "project": "项目",
     "status": "状态",
     "identity": "身份",
-    "sshCommands": "sshCommand 行数",
+    "sshCommands": "sshCommand 数",
     "sshTest": "SSH 测试",
     "action": "操作",
     "clean": "清理",
