@@ -58,12 +58,29 @@ fn write_repo_gitconfig(repo_path: &Path, identity: &Identity) -> Result<()> {
         "ssh -i {} -o IdentitiesOnly=yes",
         full_key
     );
-    let new_block = format!(
-        "\n# nicessh-managed\n[user]\n    name = {}\n    email = {}\n[core]\n    sshCommand = {}\n",
-        identity.user_name, identity.user_email, ssh_cmd
+    // Splice the new identity into the existing config:
+    //   - drop any managed `[user]` block (it carries the old
+    //     identity's user.name/user.email — switching identity
+    //     must rewrite it whole)
+    //   - inside the existing `[core]` block, remove every
+    //     `sshCommand = ... # nicessh-managed` line, then append
+    //     a fresh one. Other [core] keys (autocrlf, filemode,
+    //     repositoryformatversion, etc.) and every other section
+    //     ([remote "..."], [branch "..."], [include ...], custom
+    //     sections) are left untouched.
+    //   - if no `[core]` block exists, append one containing only
+    //     the sshCommand line.
+    //
+    // The `# nicessh-managed` marker lives on the sshCommand line
+    // itself, so `get_repo_git_config`'s
+    // `raw.contains("nicessh-managed")` heuristic continues to
+    // identify nicessh-managed repos for the audit dialog.
+    let new_raw = splice_identity_into_config(
+        &raw,
+        &identity.user_name,
+        &identity.user_email,
+        &ssh_cmd,
     );
-
-    let new_raw = strip_managed_block(&raw) + &new_block;
     crate::history::commit_change(
         "apply_identity_to_repo",
         &format!("Applied identity {} to repo", identity.label),
@@ -96,8 +113,158 @@ fn write_repo_gitconfig(repo_path: &Path, identity: &Identity) -> Result<()> {
 /// everything else: [core] housekeeping keys, [remote "..."],
 /// [branch "..."], [include ...], and any custom user sections.
 ///
+/// Splice a nicessh-managed identity into an existing `.git/config`
+/// without dropping the user's own settings.
+///
+/// Behaviour, walking the file section by section:
+///   1. Every `[user]` section (header exactly `user`, case-
+///      insensitive) is removed. Switching identity must rewrite
+///      `user.name` / `user.email` whole, so we don't try to splice
+///      inside it.
+///   2. Every `sshCommand = ...` line (case-insensitive key, after
+///      trimming leading whitespace) inside any `[core]` section is
+///      removed — both the canonical nicessh line and any
+///      user-written one. The first surviving `[core]` section
+///      then gets a fresh `sshCommand = <ssh_cmd>  # nicessh-managed`
+///      line appended. Other [core] keys (`autocrlf`, `filemode`,
+///      `repositoryformatversion`, etc.) are left untouched.
+///   3. If no `[core]` block exists, a fresh `[core]` section
+///      containing only the sshCommand line is appended to the end
+///      of the file.
+///   4. The new `[user]` block (with the identity's name and email)
+///      is appended to the end of the file.
+///
+/// The file-head `# nicessh-managed` marker that the old writer
+/// used is gone — the marker now lives on the sshCommand line
+/// itself, so `get_repo_git_config`'s `raw.contains("nicessh-managed")`
+/// heuristic still classifies the file as nicessh-managed.
+fn splice_identity_into_config(
+    raw: &str,
+    user_name: &str,
+    user_email: &str,
+    ssh_cmd: &str,
+) -> String {
+    fn is_header(s: &str) -> bool {
+        let t = s.trim_start();
+        t.starts_with('[') && s.trim_end().ends_with(']')
+    }
+    fn header_name(s: &str) -> Option<String> {
+        let t = s.trim_start();
+        if !(t.starts_with('[') && s.trim_end().ends_with(']')) {
+            return None;
+        }
+        Some(t[1..t.len() - 1].trim().to_ascii_lowercase())
+    }
+    // Walk the file once, classifying every line.
+    enum LineKind {
+        Pass,                         // emit as-is
+        MarkerComment,                // standalone `# nicessh-managed` — drop
+        ManagedUserHeader,            // [user] — drop, plus its body
+        ManagedUserBody,              // body line inside a [user] section
+        CoreHeader,                   // [core] — emit header, then handle body
+        CoreBodyPass,                 // body line inside [core] that's not sshCommand
+        CoreBodySshCommand,           // body line inside [core] that starts with sshCommand — drop
+        OtherHeader,                  // [remote "..."] / [branch "..."] / etc. — emit header + body
+        OtherBody,                    // body line inside a non-user, non-core section
+    }
+    let lines: Vec<&str> = raw.lines().collect();
+    let mut classified: Vec<LineKind> = Vec::with_capacity(lines.len());
+    let mut in_user = false;
+    let mut in_core = false;
+    let mut in_other = false;
+    for line in &lines {
+        if is_header(line) {
+            in_user = false;
+            in_core = false;
+            in_other = false;
+            match header_name(line).unwrap_or_default().as_str() {
+                "user" => {
+                    in_user = true;
+                    classified.push(LineKind::ManagedUserHeader);
+                }
+                "core" => {
+                    in_core = true;
+                    classified.push(LineKind::CoreHeader);
+                }
+                _ => {
+                    in_other = true;
+                    classified.push(LineKind::OtherHeader);
+                }
+            }
+            continue;
+        }
+        if in_user {
+            classified.push(LineKind::ManagedUserBody);
+        } else if in_core {
+            let trimmed = line.trim_start().to_ascii_lowercase();
+            if trimmed.starts_with("sshcommand") {
+                classified.push(LineKind::CoreBodySshCommand);
+            } else {
+                classified.push(LineKind::CoreBodyPass);
+            }
+        } else if in_other {
+            classified.push(LineKind::OtherBody);
+        } else {
+            // File head.
+            if line.trim() == "# nicessh-managed" {
+                classified.push(LineKind::MarkerComment);
+            } else {
+                classified.push(LineKind::Pass);
+            }
+        }
+    }
+    // Now emit: pass through everything except managed lines, but
+    // remember whether we've seen the first [core] header (so we
+    // know where to splice the fresh sshCommand).
+    let managed_ssh_line = format!("    sshCommand = {}  # nicessh-managed", ssh_cmd);
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 8);
+    let mut core_header_seen = false;
+    let mut core_spliced = false;
+    for (line, kind) in lines.iter().zip(classified.iter()) {
+        match kind {
+            LineKind::Pass | LineKind::OtherHeader | LineKind::OtherBody
+            | LineKind::CoreHeader | LineKind::CoreBodyPass => {
+                out.push(line.to_string());
+                if matches!(kind, LineKind::CoreHeader) {
+                    core_header_seen = true;
+                    if !core_spliced {
+                        out.push(managed_ssh_line.clone());
+                        core_spliced = true;
+                    }
+                }
+            }
+            LineKind::MarkerComment
+            | LineKind::ManagedUserHeader
+            | LineKind::ManagedUserBody
+            | LineKind::CoreBodySshCommand => {
+                // drop
+            }
+        }
+    }
+    if !core_spliced {
+        // No [core] survived (or none existed). Append a fresh one.
+        out.push("[core]".to_string());
+        out.push(managed_ssh_line);
+    }
+    // Append the new [user] block at the end.
+    out.push("[user]".to_string());
+    out.push(format!("    name = {}", user_name));
+    out.push(format!("    email = {}", user_email));
+    // Reference core_header_seen so the compiler doesn't warn about
+    // an unused binding if the loop never visits a CoreHeader.
+    let _ = core_header_seen;
+    // Trim trailing blank lines but keep at least one final newline.
+    while out.last().map(|s| s.trim().is_empty()).unwrap_or(false) {
+        out.pop();
+    }
+    let mut joined = out.join("\n");
+    joined.push('\n');
+    joined
+}
+
 /// The caller is expected to `strip + new_block`, so the resulting
 /// file ends up with exactly one managed block (the new one).
+#[allow(dead_code)]
 fn strip_managed_block(raw: &str) -> String {
     // Two-pass approach for clarity: first, scan the file and
     // remember the (start_line, end_line) ranges of every section
@@ -685,6 +852,115 @@ mod tests {
         let stripped = strip_managed_block(raw);
         assert!(stripped.contains("[remote"));
         assert!(!stripped.contains("# nicessh-managed"));
+    }
+
+    // ---- splice_identity_into_config ----
+
+    fn call_splice(raw: &str) -> String {
+        splice_identity_into_config(raw, "Alice", "a@co.com", "ssh -i ~/.ssh/id_alice -o IdentitiesOnly=yes")
+    }
+
+    #[test]
+    fn test_splice_replaces_old_managed_user_and_sshcommand_in_core() {
+        // Old managed block in the canonical shape written by
+        // previous NiceSSH builds: header comment, [user], [core]
+        // with a single sshCommand line. Splice must drop the
+        // marker comment + [user] and rewrite sshCommand in place.
+        let raw = "\n# nicessh-managed\n[user]\n    name = Old\n    email = o@x\n[core]\n    sshCommand = ssh -i ~/.ssh/id_old -o IdentitiesOnly=yes\n";
+        let out = call_splice(raw);
+        assert!(!out.contains("Old"), "old [user] must be gone, got: {}", out);
+        assert!(!out.contains("id_old"), "old sshCommand must be gone, got: {}", out);
+        assert!(
+        !out.lines().any(|l| l.trim() == "# nicessh-managed"),
+        "no free-standing marker line, got: {}", out
+    );
+        assert!(out.contains("name = Alice"));
+        assert!(out.contains("email = a@co.com"));
+        assert!(out.contains("sshCommand = ssh -i ~/.ssh/id_alice -o IdentitiesOnly=yes  # nicessh-managed"));
+        // exactly one user + exactly one core, exactly one sshCommand
+        assert_eq!(out.matches("[user]").count(), 1);
+        assert_eq!(out.matches("[core]").count(), 1);
+        assert_eq!(out.matches("sshCommand").count(), 1);
+    }
+
+    #[test]
+    fn test_splice_preserves_non_sshcore_keys() {
+        // [core] carries both a nicessh sshCommand and user-added
+        // housekeeping keys (autocrlf, filemode). Splice must keep
+        // those intact and only touch the sshCommand line.
+        let raw = "[core]\n    repositoryformatversion = 0\n    filemode = true\n    autocrlf = input\n    sshCommand = ssh -i ~/.ssh/id_old\n[user]\n    name = Old\n    email = o@x\n";
+        let out = call_splice(raw);
+        assert!(out.contains("repositoryformatversion = 0"));
+        assert!(out.contains("filemode = true"));
+        assert!(out.contains("autocrlf = input"));
+        assert!(!out.contains("id_old"));
+        assert!(!out.contains("name = Old"));
+        assert!(out.contains("name = Alice"));
+    }
+
+    #[test]
+    fn test_splice_keeps_remote_and_branch_sections() {
+        // The whole point of the rewrite: don't blow away
+        // [remote "..."] / [branch "..."] / [include ...] when
+        // switching identity.
+        let raw = "[remote \"origin\"]\n    url = git@github.com:x/y.git\n    fetch = +refs/heads/*:refs/remotes/origin/*\n[branch \"main\"]\n    remote = origin\n    merge = refs/heads/main\n[core]\n    sshCommand = ssh -i ~/.ssh/k1\n[user]\n    name = Old\n    email = o@x\n";
+        let out = call_splice(raw);
+        assert!(out.contains("[remote \"origin\"]"));
+        assert!(out.contains("url = git@github.com:x/y.git"));
+        assert!(out.contains("[branch \"main\"]"));
+        assert!(out.contains("merge = refs/heads/main"));
+    }
+
+    #[test]
+    fn test_splice_handles_no_core_section() {
+        // No [core] at all: append a fresh [core] block with just
+        // the sshCommand line.
+        let raw = "[remote \"origin\"]\n    url = git@github.com:x/y.git\n[user]\n    name = Old\n    email = o@x\n";
+        let out = call_splice(raw);
+        assert!(out.contains("[core]"));
+        assert!(out.contains("sshCommand = ssh -i ~/.ssh/id_alice -o IdentitiesOnly=yes  # nicessh-managed"));
+        assert!(out.contains("name = Alice"));
+        // remote preserved
+        assert!(out.contains("url = git@github.com:x/y.git"));
+    }
+
+    #[test]
+    fn test_splice_handles_stacked_legacy_managed_blocks() {
+        // Pre-marker-era or repeated-switch residue: two stacked
+        // `[user]` + `[core] sshCommand` blocks. Splice must
+        // collapse to a single `[user]` and a single sshCommand.
+        let raw = "[user]\n    name = first\n    email = f@x\n[core]\n    sshCommand = ssh -i ~/.ssh/k1\n[user]\n    name = second\n    email = s@x\n[core]\n    sshCommand = ssh -i ~/.ssh/k2\n";
+        let out = call_splice(raw);
+        assert_eq!(out.matches("[user]").count(), 1);
+        assert_eq!(out.matches("sshCommand").count(), 1);
+        assert!(out.contains("name = Alice"));
+        assert!(!out.contains("name = first"));
+        assert!(!out.contains("name = second"));
+    }
+
+    #[test]
+    fn test_splice_is_idempotent() {
+        // Splice the same identity twice -> result unchanged. This
+        // is what `apply_identity_to_repo` does in practice when a
+        // user re-applies the same identity; we must not pile up
+        // duplicate sshCommand lines.
+        let raw = "[core]\n    sshCommand = ssh -i ~/.ssh/k1\n[user]\n    name = X\n    email = x@y\n";
+        let once = call_splice(raw);
+        let twice = call_splice(&once);
+        assert_eq!(once, twice, "splice must be idempotent");
+        assert_eq!(twice.matches("sshCommand").count(), 1);
+    }
+
+    #[test]
+    fn test_splice_drops_free_standing_marker_comment() {
+        // Old builds wrote a free-standing `# nicessh-managed` at
+        // the top of the file. After splice, the only place
+        // `nicessh-managed` should appear is on the sshCommand
+        // line itself.
+        let raw = "# nicessh-managed\n[core]\n    sshCommand = ssh -i ~/.ssh/old\n[user]\n    name = Old\n    email = o@x\n";
+        let out = call_splice(raw);
+        assert_eq!(out.matches("# nicessh-managed").count(), 1,
+            "marker should appear exactly once (on sshCommand), got: {}", out);
     }
 }
 
