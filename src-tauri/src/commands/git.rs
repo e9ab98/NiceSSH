@@ -80,22 +80,136 @@ fn write_repo_gitconfig(repo_path: &Path, identity: &Identity) -> Result<()> {
     Ok(())
 }
 
+/// Remove every managed `[user]` / `[core]-with-sshCommand` block
+/// from a project `.git/config`, then leave the door open for the
+/// caller to append one fresh managed block at the end.
+///
+/// Managed blocks are the things `apply_identity_to_repo` writes:
+///   # nicessh-managed        (optional marker comment)
+///   [user]
+///       name = ...
+///       email = ...
+///   [core]
+///       sshCommand = ssh -i ~/.ssh/<key> -o IdentitiesOnly=yes
+///
+/// We drop every such block (with or without the marker) and keep
+/// everything else: [core] housekeeping keys, [remote "..."],
+/// [branch "..."], [include ...], and any custom user sections.
+///
+/// The caller is expected to `strip + new_block`, so the resulting
+/// file ends up with exactly one managed block (the new one).
 fn strip_managed_block(raw: &str) -> String {
-    if let Some(start) = raw.find("# nicessh-managed") {
-        let after = &raw[start..];
-        if let Some(end_offset) = after.find("\n[") {
-            let end = start + end_offset;
-            return format!(
-                "{}{}",
-                &raw[..start].trim_end(),
-                &raw[end..]
-            );
+    // Two-pass approach for clarity: first, scan the file and
+    // remember the (start_line, end_line) ranges of every section
+    // and whether each section is "managed" (drop it) or "kept"
+    // (emit it).
+    //
+    // A section is the lines from one `[header]` (inclusive) up to
+    // the next `[header]` (exclusive) or EOF. A section is "managed"
+    // if its header is `user`, OR its header is `core` AND its body
+    // contains a `sshCommand =` line. A standalone `# nicessh-
+    // managed` comment is folded into the *next* section's body
+    // during the scan; if that section is managed, the comment is
+    // dropped along with the section.
+    struct Section {
+        start: usize, // line index of the [header] (or first line if file-head)
+        header: Option<String>, // None for the file head
+        body: Vec<usize>, // line indices of body lines (including marker comments)
+    }
+    let lines: Vec<&str> = raw.lines().collect();
+    let mut sections: Vec<Section> = Vec::new();
+    let mut i = 0;
+    // File head: any lines before the first [section] header.
+    let mut head_end = 0;
+    while head_end < lines.len() {
+        let t = lines[head_end].trim_start();
+        if t.starts_with('[') && lines[head_end].trim_end().ends_with(']') {
+            break;
+        }
+        head_end += 1;
+    }
+    if head_end > 0 {
+        sections.push(Section { start: 0, header: None, body: (0..head_end).collect() });
+    }
+    i = head_end;
+    while i < lines.len() {
+        let t = lines[i].trim_start();
+        let t_end = lines[i].trim_end();
+        if t.starts_with('[') && t_end.ends_with(']') {
+            let inner = t[1..t.len() - 1].trim().to_string();
+            let mut body: Vec<usize> = Vec::new();
+            let mut j = i + 1;
+            while j < lines.len() {
+                let nt = lines[j].trim_start();
+                if nt.starts_with('[') && lines[j].trim_end().ends_with(']') {
+                    break;
+                }
+                body.push(j);
+                j += 1;
+            }
+            sections.push(Section { start: i, header: Some(inner), body });
+            i = j;
         } else {
-            return raw[..start].trim_end().to_string();
+            i += 1;
         }
     }
-    raw.trim_end().to_string()
+    // Decide which sections are managed.
+    let mut is_managed: Vec<bool> = sections.iter().map(|s| {
+        match s.header.as_deref() {
+            Some(h) if h.eq_ignore_ascii_case("user") => true,
+            Some(h) if h.eq_ignore_ascii_case("core") => {
+                s.body.iter().any(|&k| {
+                    lines[k].trim_start().to_ascii_lowercase()
+                        .starts_with("sshcommand")
+                })
+            }
+            _ => false,
+        }
+    }).collect();
+    // For the file head (header = None), strip out standalone
+    // `# nicessh-managed` comment lines.
+    for (idx, s) in sections.iter().enumerate() {
+        if s.header.is_none() {
+            // File head is "managed" only if it has nothing but
+            // marker comments. We treat the head as "kept" by
+            // default; we filter marker comments inline below.
+            is_managed[idx] = false;
+        }
+    }
+    // Build output: keep non-managed sections, drop managed ones.
+    // Within non-managed bodies, drop standalone `# nicessh-managed`
+    // comment lines.
+    let mut out = String::with_capacity(raw.len());
+    for (idx, s) in sections.iter().enumerate() {
+        if is_managed[idx] {
+            continue;
+        }
+        if s.header.is_none() {
+            // File head: emit each line unless it is the marker.
+            for &k in &s.body {
+                if lines[k].trim() == "# nicessh-managed" {
+                    continue;
+                }
+                out.push_str(lines[k]);
+            out.push('\n');
+            }
+        } else {
+            // Non-managed section: emit the [header], then body
+            // (with marker comments stripped).
+            out.push_str(lines[s.start]);
+            out.push('\n');
+            for &k in &s.body {
+                if lines[k].trim() == "# nicessh-managed" {
+                    continue;
+                }
+                out.push_str(lines[k]);
+            out.push('\n');
+            }
+        }
+    }
+    out.trim_end().to_string()
 }
+
 
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
@@ -520,6 +634,57 @@ mod tests {
             let result = get_repo_git_config(repo.to_string_lossy().to_string()).unwrap();
             assert!(result.managed_by_nicessh);
         });
+    }
+
+    #[test]
+    fn test_strip_managed_block_keeps_only_last_marker() {
+        // Simulate a .git/config polluted by 3 stacked identity
+        // switches (3 nicessh-managed blocks). strip_managed_block
+        // must drop ALL of them; the caller appends one fresh
+        // managed block in `write_repo_gitconfig`. So after strip:
+        //   - 0 `# nicessh-managed` markers
+        //   - 0 `sshCommand` lines
+        //   - 0 `[user]` sections
+        //   - the [core] (git housekeeping) and [remote] are kept
+        let raw = "[core]\n    repositoryformatversion = 0\n[remote \"origin\"]\n    url = git@github.com:x/y.git\n\n# nicessh-managed\n[user]\n    name = first\n    email = f@x\n[core]\n    sshCommand = ssh -i ~/.ssh/k1\n\n# nicessh-managed\n[user]\n    name = second\n    email = s@x\n[core]\n    sshCommand = ssh -i ~/.ssh/k2\n\n# nicessh-managed\n[user]\n    name = third\n    email = t@x\n[core]\n    sshCommand = ssh -i ~/.ssh/k3\n";
+        let stripped = strip_managed_block(raw);
+        assert_eq!(stripped.matches("# nicessh-managed").count(), 0,
+            "strip must drop every managed marker, got: {}",
+            stripped);
+        assert_eq!(stripped.matches("sshCommand").count(), 0,
+            "strip must drop every managed [core], got: {}",
+            stripped);
+        assert_eq!(stripped.matches("[user]").count(), 0,
+            "strip must drop every [user], got: {}",
+            stripped);
+        // git's own scaffolding survives.
+        assert!(stripped.contains("[remote"));
+        assert!(stripped.contains("repositoryformatversion"));
+    }
+
+    #[test]
+    fn test_strip_managed_block_no_marker_legacy_managed_blocks() {
+        // Legacy file with two unmanaged [user]+[core] sshCommand
+        // blocks (pre-marker era). strip must drop ALL of them
+        // (the caller will append a fresh managed block).
+        let raw = "[user]\n    name = first\n    email = f@x\n[core]\n    sshCommand = ssh -i ~/.ssh/k1\n[user]\n    name = second\n    email = s@x\n[core]\n    sshCommand = ssh -i ~/.ssh/k2\n";
+        let stripped = strip_managed_block(raw);
+        assert_eq!(stripped.matches("[user]").count(), 0,
+            "strip must drop every [user], got: {}",
+            stripped);
+        assert_eq!(stripped.matches("sshCommand").count(), 0,
+            "strip must drop every [core]-with-sshCommand, got: {}",
+            stripped);
+    }
+
+    #[test]
+    fn test_strip_managed_block_no_managed_at_all() {
+        // Plain git config with only remote/branch — must be returned
+        // unchanged (legacy fallback path).
+        let raw = "[core]\n    repositoryformatversion = 0\n[remote \"origin\"]\n    url = git@github.com:x/y.git\n";
+        let stripped = strip_managed_block(raw);
+        assert!(stripped.contains("[remote"));
+        assert!(!stripped.contains("# nicessh-managed"));
     }
 }
 
