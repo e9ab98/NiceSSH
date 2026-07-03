@@ -84,15 +84,44 @@ jobs:
           # ports.ubuntu.com. Without this, apt-get update fails with
           # 404 on every arm64 Packages index.
           sudo dpkg --add-architecture arm64
-          # Pin the default /etc/apt/sources.list to amd64. The GitHub
-          # ubuntu-22.04 runner ships security.ubuntu.com/ubuntu and
-          # archive.ubuntu.com/ubuntu entries that are NOT arch-restricted,
-          # so once arm64 is enabled apt tries to fetch arm64 Packages
-          # indices from those mirrors — but they only serve amd64 and
-          # return 404 for arm64, breaking `apt-get update`. We force
-          # amd64 on the default sources and let the ports.ubuntu.com
-          # file below provide the arm64 indices.
-          sudo sed -i 's|^deb http|deb [arch=amd64] http|' /etc/apt/sources.list
+          # Force every default apt source to amd64-only. The GitHub
+          # ubuntu-22.04 runner ships BOTH the legacy one-line-per-source
+          # /etc/apt/sources.list AND the modern Deb822
+          # /etc/apt/sources.list.d/ubuntu.sources (with `Types: deb` /
+          # `URIs: ...` blocks) — both pointing to security.ubuntu.com
+          # and archive.ubuntu.com. Neither is arch-restricted, so once
+          # arm64 is enabled apt tries to fetch arm64 Packages indices
+          # from those mirrors — but they only serve amd64 and return
+          # 404 on every jammy / jammy-updates / jammy-backports /
+          # jammy-security arm64 Packages file, breaking `apt-get
+          # update`. We rewrite both formats to restrict them to amd64
+          # and let the ports.ubuntu.com file below provide the arm64
+          # indices.
+          #
+          # 1) legacy one-line format: /etc/apt/sources.list
+          sudo tee /etc/apt/sources.list >/dev/null <<'EOF'
+          deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
+          deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse
+          deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy-backports main restricted universe multiverse
+          deb [arch=amd64] http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse
+          EOF
+          # 2) modern Deb822 format: /etc/apt/sources.list.d/ubuntu.sources
+          sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<'EOF'
+          Types: deb
+          URIs: http://archive.ubuntu.com/ubuntu
+          Suites: jammy jammy-updates jammy-backports
+          Components: main restricted universe multiverse
+          Architectures: amd64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+
+          Types: deb
+          URIs: http://security.ubuntu.com/ubuntu
+          Suites: jammy-security
+          Components: main restricted universe multiverse
+          Architectures: amd64
+          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
+          EOF
+          # 3) arm64 packages from ports.ubuntu.com
           sudo tee /etc/apt/sources.list.d/arm64-ports.list >/dev/null <<'EOF'
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
           deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
@@ -148,6 +177,29 @@ jobs:
 
       - name: Install frontend dependencies
         run: pnpm install --frozen-lockfile
+
+      # When the same tag is re-pushed (or a previous run was cancelled
+      # mid-flight), the release + its `latest.json` may already exist on
+      # GitHub. tauri-action's upload step then calls
+      # `GET /repos/{owner}/{repo}/releases/assets/{id}` to look up the
+      # previously uploaded asset, but the cached `latest.json` can
+      # reference an asset ID that was replaced/removed by a concurrent
+      # matrix job, producing `Error: Not Found - GET .../releases/assets/...`
+      # and aborting the publish. We delete the existing release (idempotent
+      # across matrix jobs) so every workflow run starts from a clean slate.
+      # Only one matrix job needs to actually delete; `|| true` swallows
+      # the 404 from the other jobs racing to delete the same release.
+      - name: Delete pre-existing release for ${{ github.ref_name }}
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -e
+          if gh release view "${{ github.ref_name }}" >/dev/null 2>&1; then
+            echo "Deleting pre-existing release ${{ github.ref_name }}..."
+            gh release delete "${{ github.ref_name }}" --cleanup-tags --yes
+          else
+            echo "No pre-existing release for ${{ github.ref_name }}."
+          fi
 
       # tauri-action triggers `pnpm tauri build` (which runs `beforeBuildCommand`
       # = `pnpm build` per tauri.conf.json), signs every bundle with
