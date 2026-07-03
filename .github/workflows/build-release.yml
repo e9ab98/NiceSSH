@@ -43,12 +43,10 @@ jobs:
             target: x86_64-unknown-linux-gnu
             label: linux-x64
             bundler_args: "--bundles appimage"
-          # Linux ARM64 (Raspberry Pi, AWS Graviton, Asahi). Cross-compile
-          # from the x86_64 ubuntu-22.04 runner; the Install Linux build
-          # dependencies step below is gated on runner.os == 'Linux' and
-          # installs the aarch64 cross-toolchain + arm64 GTK/webkit libs
-          # so cargo can build for aarch64-unknown-linux-gnu.
-          - os: ubuntu-22.04
+          # Linux ARM64 (Raspberry Pi, AWS Graviton, Asahi). Native build on
+          # GitHub's official ARM64 runner; the Install Linux build
+          # dependencies step below installs native packages natively.
+          - os: ubuntu-24.04-arm
             target: aarch64-unknown-linux-gnu
             label: linux-arm64
             bundler_args: "--bundles appimage"
@@ -79,95 +77,16 @@ jobs:
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
-          # Enable arm64 multiarch and add the Ubuntu arm64 ports repo.
-          # jammy main only publishes amd64; arm64 packages live under
-          # ports.ubuntu.com. Without this, apt-get update fails with
-          # 404 on every arm64 Packages index.
-          sudo dpkg --add-architecture arm64
-          # Force every default apt source to amd64-only. The GitHub
-          # ubuntu-22.04 runner ships BOTH the legacy one-line-per-source
-          # /etc/apt/sources.list AND the modern Deb822
-          # /etc/apt/sources.list.d/ubuntu.sources (with `Types: deb` /
-          # `URIs: ...` blocks) — both pointing to security.ubuntu.com
-          # and archive.ubuntu.com. Neither is arch-restricted, so once
-          # arm64 is enabled apt tries to fetch arm64 Packages indices
-          # from those mirrors — but they only serve amd64 and return
-          # 404 on every jammy / jammy-updates / jammy-backports /
-          # jammy-security arm64 Packages file, breaking `apt-get
-          # update`. We rewrite both formats to restrict them to amd64
-          # and let the ports.ubuntu.com file below provide the arm64
-          # indices.
-          #
-          # 1) legacy one-line format: /etc/apt/sources.list
-          sudo tee /etc/apt/sources.list >/dev/null <<'EOF'
-          deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy main restricted universe multiverse
-          deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy-updates main restricted universe multiverse
-          deb [arch=amd64] http://archive.ubuntu.com/ubuntu jammy-backports main restricted universe multiverse
-          deb [arch=amd64] http://security.ubuntu.com/ubuntu jammy-security main restricted universe multiverse
-          EOF
-          # 2) modern Deb822 format: /etc/apt/sources.list.d/ubuntu.sources
-          sudo tee /etc/apt/sources.list.d/ubuntu.sources >/dev/null <<'EOF'
-          Types: deb
-          URIs: http://archive.ubuntu.com/ubuntu
-          Suites: jammy jammy-updates jammy-backports
-          Components: main restricted universe multiverse
-          Architectures: amd64
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-
-          Types: deb
-          URIs: http://security.ubuntu.com/ubuntu
-          Suites: jammy-security
-          Components: main restricted universe multiverse
-          Architectures: amd64
-          Signed-By: /usr/share/keyrings/ubuntu-archive-keyring.gpg
-          EOF
-          # 3) arm64 packages from ports.ubuntu.com
-          sudo tee /etc/apt/sources.list.d/arm64-ports.list >/dev/null <<'EOF'
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
-          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse
-          EOF
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
-            libwebkit2gtk-4.1-dev:arm64 \
             libappindicator3-dev \
-            libappindicator3-dev:arm64 \
             librsvg2-dev \
-            librsvg2-dev:arm64 \
             patchelf \
             libssl-dev \
-            libssl-dev:arm64 \
             libgtk-3-dev \
-            libgtk-3-dev:arm64 \
             libsoup-3.0-dev \
-            libsoup-3.0-dev:arm64 \
-            libjavascriptcoregtk-4.1-dev \
-            libjavascriptcoregtk-4.1-dev:arm64 \
-            gcc-aarch64-linux-gnu \
-            g++-aarch64-linux-gnu \
-            libc6-dev-arm64-cross
-
-      - name: Configure ARM64 cross-compile toolchain
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          # Point cargo at the cross-linker and the cross sysroot so the
-          # arm64 GTK/webkit pkg-config files are picked up.
-          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
-          cat > /tmp/aarch64-unknown-linux-gnu.config <<'EOF'
-          [target.aarch64-unknown-linux-gnu]
-          linker = "aarch64-linux-gnu-gcc"
-          EOF
-          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig" >> "$GITHUB_ENV"
-          echo "PKG_CONFIG_SYSROOT_DIR=/" >> "$GITHUB_ENV"
-          echo "CARGO_HOME=$HOME/.cargo" >> "$GITHUB_ENV"
-          echo "QEMU_LD_PREFIX=/usr/aarch64-linux-gnu" >> "$GITHUB_ENV"
-
-      - name: Add ARM64 Rust target
-        if: matrix.target == 'aarch64-unknown-linux-gnu'
-        run: |
-          rustup target add aarch64-unknown-linux-gnu
+            libjavascriptcoregtk-4.1-dev
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
@@ -190,6 +109,7 @@ jobs:
       # Only one matrix job needs to actually delete; `|| true` swallows
       # the 404 from the other jobs racing to delete the same release.
       - name: Delete pre-existing release for ${{ github.ref_name }}
+        shell: bash
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
         run: |
