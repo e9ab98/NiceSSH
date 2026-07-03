@@ -33,9 +33,24 @@ jobs:
             target: x86_64-pc-windows-msvc
             label: windows-x64
             bundler_args: "--bundles msi"
+          # Windows ARM64 (Surface Pro X, Snapdragon X laptops). GitHub
+          # added windows-11-arm as a GA label in 2024.
+          - os: windows-11-arm
+            target: aarch64-pc-windows-msvc
+            label: windows-arm64
+            bundler_args: "--bundles msi"
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             label: linux-x64
+            bundler_args: "--bundles appimage"
+          # Linux ARM64 (Raspberry Pi, AWS Graviton, Asahi). Cross-compile
+          # from the x86_64 ubuntu-22.04 runner; the Install Linux build
+          # dependencies step below is gated on runner.os == 'Linux' and
+          # installs the aarch64 cross-toolchain + arm64 GTK/webkit libs
+          # so cargo can build for aarch64-unknown-linux-gnu.
+          - os: ubuntu-22.04
+            target: aarch64-unknown-linux-gnu
+            label: linux-arm64
             bundler_args: "--bundles appimage"
     runs-on: ${{ matrix.os }}
 
@@ -53,6 +68,60 @@ jobs:
         with:
           node-version: "22"
           cache: "pnpm"
+
+      # Tauri on Linux links GTK + webkit2gtk; install the system dev
+      # packages required by tauri-build / gdk-sys. Tauri 2.x needs the
+      # webkit2gtk-4.1 line; `libgtk-3-dev` provides gdk-3.0.pc which
+      # the rust gdk-sys crate looks up via pkg-config. The
+      # `:arm64` suffixed packages and the cross-toolchain are required
+      # for the linux-arm64 matrix entry (cross-compiled from this
+      # x86_64 ubuntu-22.04 runner to aarch64-unknown-linux-gnu).
+      - name: Install Linux build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          # Enable arm64 multiarch so we can install the :arm64 packages
+          # required to cross-compile the linux-arm64 matrix entry.
+          sudo dpkg --add-architecture arm64
+          sudo apt-get update
+          sudo apt-get install -y \
+            libwebkit2gtk-4.1-dev \
+            libwebkit2gtk-4.1-dev:arm64 \
+            libappindicator3-dev \
+            libappindicator3-dev:arm64 \
+            librsvg2-dev \
+            librsvg2-dev:arm64 \
+            patchelf \
+            libssl-dev \
+            libssl-dev:arm64 \
+            libgtk-3-dev \
+            libgtk-3-dev:arm64 \
+            libsoup-3.0-dev \
+            libsoup-3.0-dev:arm64 \
+            libjavascriptcoregtk-4.1-dev \
+            libjavascriptcoregtk-4.1-dev:arm64 \
+            gcc-aarch64-linux-gnu \
+            g++-aarch64-linux-gnu \
+            libc6-dev-arm64-cross
+
+      - name: Configure ARM64 cross-compile toolchain
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          # Point cargo at the cross-linker and the cross sysroot so the
+          # arm64 GTK/webkit pkg-config files are picked up.
+          echo "CARGO_TARGET_AARCH64_UNKNOWN_LINUX_GNU_LINKER=aarch64-linux-gnu-gcc" >> "$GITHUB_ENV"
+          cat > /tmp/aarch64-unknown-linux-gnu.config <<'EOF'
+          [target.aarch64-unknown-linux-gnu]
+          linker = "aarch64-linux-gnu-gcc"
+          EOF
+          echo "PKG_CONFIG_PATH=/usr/lib/aarch64-linux-gnu/pkgconfig:/usr/share/pkgconfig" >> "$GITHUB_ENV"
+          echo "PKG_CONFIG_SYSROOT_DIR=/" >> "$GITHUB_ENV"
+          echo "CARGO_HOME=$HOME/.cargo" >> "$GITHUB_ENV"
+          echo "QEMU_LD_PREFIX=/usr/aarch64-linux-gnu" >> "$GITHUB_ENV"
+
+      - name: Add ARM64 Rust target
+        if: matrix.target == 'aarch64-unknown-linux-gnu'
+        run: |
+          rustup target add aarch64-unknown-linux-gnu
 
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
