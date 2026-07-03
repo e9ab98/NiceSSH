@@ -3,24 +3,20 @@ name: Build & Publish Release
 on:
   push:
     tags:
-      - 'v*'
+      - "v*.*.*"
   workflow_dispatch:
-    inputs:
-      version:
-        description: 'Tag name to publish (e.g. v0.3.41). When empty, falls back to the most recent v* tag pushed to main.'
-        required: false
-        default: ''
 
 permissions:
   contents: write
-  actions: read
+
+# Re-pushing the same tag cancels the previous in-flight run.
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
-  # ---------------------------------------------------------------------------
-  # Per-platform native builds
-  # ---------------------------------------------------------------------------
-  build:
-    name: Build (${{ matrix.label }})
+  build-and-release:
+    name: Build & Publish (${{ matrix.label }})
     strategy:
       fail-fast: false
       matrix:
@@ -28,279 +24,54 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             label: darwin-arm64
-            artifact: NiceSSH-darwin-arm64
-            bundler_subdir: dmg
-            extra_bundles: app
-          - os: macos-14
+            bundler_args: "--bundles dmg,app"
+          - os: macos-15-intel
             target: x86_64-apple-darwin
             label: darwin-x64
-            artifact: NiceSSH-darwin-x64
-            bundler_subdir: dmg
-            extra_bundles: app
+            bundler_args: "--bundles dmg,app"
           - os: windows-2022
             target: x86_64-pc-windows-msvc
             label: windows-x64
-            artifact: NiceSSH-windows-x64
-            bundler_subdir: msi
+            bundler_args: "--bundles msi"
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             label: linux-x64
-            artifact: NiceSSH-linux-x64
-            bundler_subdir: appimage
+            bundler_args: "--bundles appimage"
     runs-on: ${{ matrix.os }}
-    steps:
-      - uses: actions/checkout@v5
 
-      - name: Install Rust toolchain
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+          cache: "pnpm"
+
+      - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
-        with:
-          targets: ${{ matrix.target }}
 
-      - name: Cache cargo
-        uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: src-tauri -> target
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
 
-      - uses: pnpm/action-setup@v4
-        with:
-          version: 9
+      - name: Install frontend dependencies
+        run: pnpm install --frozen-lockfile
 
-      - uses: actions/setup-node@v4
-        with:
-          node-version: 22
-          cache: pnpm
-
-      - name: Install Linux build deps
-        if: runner.os == 'Linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install -y \
-            libwebkit2gtk-4.1-dev \
-            libappindicator3-dev \
-            librsvg2-dev \
-            patchelf \
-            libssl-dev \
-            wget
-
-      - name: Install Rust targets (Windows MSVC)
-        if: runner.os == 'Windows'
-        run: |
-          rustup target add ${{ matrix.target }}
-
-      - name: Build frontend
-        run: pnpm install --frozen-lockfile && pnpm build
-
-      - name: Build Tauri bundle
-        shell: bash
-        run: |
-          set -o pipefail
-          pnpm tauri build --target ${{ matrix.target }} --bundles ${{ matrix.bundler_subdir }}${{ matrix.extra_bundles && format(',') }}${{ matrix.extra_bundles }} 2>&1 | tee build.log
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-
-      - name: List built artifacts
-        if: runner.os != 'Windows'
-        run: |
-          ls -la src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundler_subdir }}/
-
-      - name: List built artifacts (Windows)
-        if: runner.os == 'Windows'
-        shell: cmd
-        run: dir src-tauri\target\${{ matrix.target }}\release\bundle\${{ matrix.bundler_subdir }}\
-
-      - name: Upload build log
-        if: always()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}-log
-          if-no-files-found: ignore
-          path: build.log
-
-      - name: List macOS bundle outputs
-        if: runner.os == 'macOS'
-        run: ls -la src-tauri/target/${{ matrix.target }}/release/bundle/macos/
-
-      - name: Upload bundle artifact
-        if: success()
-        uses: actions/upload-artifact@v4
-        with:
-          name: ${{ matrix.artifact }}
-          if-no-files-found: error
-          path: |
-            src-tauri/target/${{ matrix.target }}/release/bundle/${{ matrix.bundler_subdir }}/*
-            src-tauri/target/${{ matrix.target }}/release/bundle/updater/**
-            src-tauri/target/${{ matrix.target }}/release/bundle/macos/*.tar.gz*
-
-  # ---------------------------------------------------------------------------
-  # Final: collect all artifacts and publish GitHub Release.
-  # Only depends on the per-platform matrix `build` job. There are no
-  # best-effort side jobs anymore — a failure on any platform blocks
-  # the release and rolls the tag back.
-  # ---------------------------------------------------------------------------
-  release:
-    name: Publish GitHub Release
-    needs: build
-    if: |
-      (github.event_name == 'push' && startsWith(github.ref, 'refs/tags/v')) ||
-      (github.event_name == 'workflow_dispatch' && inputs.version != '')
-    runs-on: ubuntu-22.04
-    steps:
-      - name: Verify Tauri updater signing secrets
-        env:
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
-          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
-        run: |
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY" ]; then
-            echo "::error::Tauri updater signing key not provided (TAURI_SIGNING_PRIVATE_KEY missing)."
-            echo "Set this secret in Settings > Secrets and variables > Actions before tagging v0.3.0+."
-            exit 1
-          fi
-          if [ -z "$TAURI_SIGNING_PRIVATE_KEY_PASSWORD" ]; then
-            echo "::error::TAURI_SIGNING_PRIVATE_KEY_PASSWORD missing."
-            exit 1
-          fi
-          echo "Updater signing secrets present."
-
-      - name: Checkout repository
-        uses: actions/checkout@v5
-        with:
-          fetch-depth: 0
-
-      - name: Resolve current tag
-        id: resolve
-        env:
-          EVENT_NAME: ${{ github.event_name }}
-          INPUT_VERSION: ${{ inputs.version }}
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          if [ "$EVENT_NAME" = "workflow_dispatch" ] && [ -n "$INPUT_VERSION" ]; then
-            CURRENT_TAG="$INPUT_VERSION"
-          elif [ "$EVENT_NAME" = "push" ]; then
-            # Pushed tag (workflow triggers on push tags: ['v*'])
-            CURRENT_TAG="${GITHUB_REF_NAME}"
-          else
-            # Fallback: resolve the most recent v* tag locally
-            git fetch --tags --force
-            CURRENT_TAG=$(git tag -l "v*" --sort=-v:refname | head -1)
-          fi
-          if [ -z "$CURRENT_TAG" ]; then
-            echo "::error::No tag resolved for this release run."
-            exit 1
-          fi
-          echo "current_tag=${CURRENT_TAG}" >> "$GITHUB_OUTPUT"
-          echo "Resolved current tag: ${CURRENT_TAG}"
-
-      - name: Download all artifacts
-        uses: actions/download-artifact@v4
-        with:
-          path: artifacts
-
-      - name: Merge platform latest.json files
-        env:
-          CURRENT_TAG: ${{ steps.resolve.outputs.current_tag }}
-        run: |
-          node scripts/merge-updater.mjs
-
-      - name: Build release notes (CHANGELOG section + commit diff via git log)
-        id: changelog
-        env:
-          CURRENT_TAG: ${{ steps.resolve.outputs.current_tag }}
-        run: |
-          set -e
-          REPO="${GITHUB_REPOSITORY}"
-
-          # Make sure tags are fetched locally
-          git fetch --tags --force
-          
-          # Find previous tag using git describe
-          PREV_TAG=$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || true)
-
-          # CHANGELOG.md ## [<current_ver>] section if present
-          SECTION=""
-          if [ -f CHANGELOG.md ]; then
-            VER="${CURRENT_TAG#v}"
-            SECTION=$(awk -v ver="$VER" '
-              $0 ~ "^## [[]" { in_section = 0 }
-              $0 ~ "^## [[]" ver "[]]" { in_section = 1; next }
-              /^## [[]/ && in_section { in_section = 0 }
-              in_section
-            ' CHANGELOG.md)
-          fi
-
-          # Generate release-notes.md via local git log (100% deterministic and sync-delay safe)
-          {
-            if [ -n "$SECTION" ]; then
-              echo "$SECTION"
-              echo ""
-            fi
-            echo "### Commits"
-            echo ""
-            if [ -n "$PREV_TAG" ]; then
-              git log ${PREV_TAG}..${CURRENT_TAG} --oneline --pretty=format:"- [\`%h\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/%H) %s" | head -100
-              echo ""
-              echo ""
-              echo "**Full Changelog**: https://github.com/${REPO}/compare/${PREV_TAG}...${CURRENT_TAG}"
-            else
-              git log ${CURRENT_TAG} --oneline --pretty=format:"- [\`%h\`](${GITHUB_SERVER_URL}/${GITHUB_REPOSITORY}/commit/%H) %s" | head -100
-              echo ""
-              echo ""
-              echo "_First tagged release of this line._"
-            fi
-          } > release-notes.md
-
-          if [ -s release-notes.md ]; then
-            echo "notes_file=release-notes.md" >> "$GITHUB_OUTPUT"
-          else
-            echo "notes_file=" >> "$GITHUB_OUTPUT"
-          fi
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          tag_name: ${{ steps.resolve.outputs.current_tag }}
-          name: 'NiceSSH ${{ steps.resolve.outputs.current_tag }}'
-          draft: false
-          prerelease: ${{ contains(steps.resolve.outputs.current_tag, '-rc') || contains(steps.resolve.outputs.current_tag, '-beta') || contains(steps.resolve.outputs.current_tag, '-alpha') }}
-          body_path: ${{ steps.changelog.outputs.notes_file }}
-          generate_release_notes: false
-          files: |
-            artifacts/**/*.dmg
-            artifacts/**/*.msi
-            artifacts/**/*.AppImage
-            artifacts/**/*.sig
-            artifacts/latest.json
+      # tauri-action triggers `pnpm tauri build` (which runs `beforeBuildCommand`
+      # = `pnpm build` per tauri.conf.json), signs every bundle with
+      # TAURI_SIGNING_PRIVATE_KEY, and uploads dmg/msi/AppImage + .sig + the
+      # generated `latest.json` to the GitHub release for ${{ github.ref_name }}.
+      - name: Build and publish release
+        uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-
-      - name: Roll back tag on release failure
-        if: failure()
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: |
-          # 复用 resolve step 的输出；如果 resolve 没跑过（dispatch 早退），则从 origin 拉
-          CURRENT_TAG="${{ steps.resolve.outputs.current_tag }}"
-          if [ -z "$CURRENT_TAG" ]; then
-            CURRENT_TAG=$(git ls-remote --tags --sort=-v:refname origin 'refs/tags/v*' | head -1 | sed 's|.*refs/tags/||')
-          fi
-          if [ -z "$CURRENT_TAG" ]; then
-            echo "No tag found to roll back; skipping."
-            exit 0
-          fi
-          echo "Release job failed (or this step itself failed) — rolling back tag ${CURRENT_TAG}"
-          git tag -d "${CURRENT_TAG}" 2>/dev/null || true
-          git push origin ":refs/tags/${CURRENT_TAG}" 2>/dev/null || true
-          if command -v gh >/dev/null 2>&1; then
-            gh release delete "${CURRENT_TAG}" --yes --cleanup-tag 2>/dev/null || true
-          fi
-          git config user.name "github-actions[bot]"
-          git config user.email "41898282+github-actions[bot]@users.noreply.github.com"
-          git pull --rebase origin main || true
-          LAST=$(git log -1 --pretty=format:'%H' --grep="chore(release): sync release-please manifest" || true)
-          if [ -n "$LAST" ]; then
-            git revert --no-edit "$LAST" || true
-            git push origin main || true
-            echo "Reverted manifest commit ${LAST}"
-          else
-            echo "No release-please manifest commit to revert"
-          fi
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "NiceSSH ${{ github.ref_name }}"
+          releaseBody: "See CHANGELOG.md for ${{ github.ref_name }}. Auto-built by tauri-action."
+          releaseDraft: false
+          prerelease: false
+          args: --target ${{ matrix.target }} ${{ matrix.bundler_args }}

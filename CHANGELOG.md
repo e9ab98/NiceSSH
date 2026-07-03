@@ -8,6 +8,9 @@ adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
 ### Added
 - [CI] Auto-install Linux build dependencies in rust-checks
+
+### Changed
+- [CI] Replaced the hand-rolled release pipeline (`softprops/action-gh-release` + `scripts/merge-updater.mjs` + `dist-update/upload.sh` + `manage.sh` version-rewriting) with `tauri-apps/tauri-action`. Future releases are produced by `git tag vX.Y.Z && git push origin vX.Y.Z`; tauri-action handles build, sign, and `latest.json` generation. The previous pipeline had two recurring bugs: it wrote `latest.json` keys using Rust target triples (`x86_64-apple-darwin`) instead of Tauri 2's expected short aliases (`darwin-x86_64`), and the `files: |` upload glob omitted `*.app.tar.gz`, so macOS clients got `Download request failed with status: 404 Not Found` for the updater payload.
 - [Rust] Sanitize test directory suffix to support Windows file paths
 - [Rust] Prefix unused cross-platform variables with underscores for Windows build
 - [CI] Run macOS Intel build on Apple Silicon runner for faster queue times
