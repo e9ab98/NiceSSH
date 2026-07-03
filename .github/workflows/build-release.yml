@@ -79,9 +79,26 @@ jobs:
       - name: Install Linux build dependencies
         if: runner.os == 'Linux'
         run: |
-          # Enable arm64 multiarch so we can install the :arm64 packages
-          # required to cross-compile the linux-arm64 matrix entry.
+          # Enable arm64 multiarch and add the Ubuntu arm64 ports repo.
+          # jammy main only publishes amd64; arm64 packages live under
+          # ports.ubuntu.com. Without this, apt-get update fails with
+          # 404 on every arm64 Packages index.
           sudo dpkg --add-architecture arm64
+          # Pin the default /etc/apt/sources.list to amd64. The GitHub
+          # ubuntu-22.04 runner ships security.ubuntu.com/ubuntu and
+          # archive.ubuntu.com/ubuntu entries that are NOT arch-restricted,
+          # so once arm64 is enabled apt tries to fetch arm64 Packages
+          # indices from those mirrors — but they only serve amd64 and
+          # return 404 for arm64, breaking `apt-get update`. We force
+          # amd64 on the default sources and let the ports.ubuntu.com
+          # file below provide the arm64 indices.
+          sudo sed -i 's|^deb http|deb [arch=amd64] http|' /etc/apt/sources.list
+          sudo tee /etc/apt/sources.list.d/arm64-ports.list >/dev/null <<'EOF'
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-updates main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-security main restricted universe multiverse
+          deb [arch=arm64] http://ports.ubuntu.com/ubuntu-ports jammy-backports main restricted universe multiverse
+          EOF
           sudo apt-get update
           sudo apt-get install -y \
             libwebkit2gtk-4.1-dev \
