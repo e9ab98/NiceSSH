@@ -1,4 +1,5 @@
 import { useState, useRef } from 'react';
+import { relaunch } from '@tauri-apps/plugin-process';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { downloadAndInstall, markDismissed } from '../../lib/update';
@@ -43,12 +44,17 @@ export function UpdateToast({ version, notes }: Props) {
     toast.dismiss(TOAST_ID);
   };
 
-  // Tauri 2's app relaunch() lives in @tauri-apps/plugin-process, which
-  // is not bundled here. The installed-by-Tauri-updater binary replaces
-  // the running one on relaunch; the user closes & reopens the app to
-  // pick it up. We surface this as a final-state instruction.
-  const onRestart = () => {
-    toast.dismiss(TOAST_ID);
+  // @tauri-apps/plugin-process's relaunch() shuts the app down and
+  // re-execs the installed binary. Any error here just leaves the toast
+  // up so the user can try again or close the app manually.
+  const onRestart = async () => {
+    try {
+      await relaunch();
+    } catch (err) {
+      console.error('relaunch failed', err);
+      toast.error(t('update.toast.failed'));
+      toast.dismiss(TOAST_ID);
+    }
   };
 
   return (

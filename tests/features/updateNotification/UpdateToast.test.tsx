@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
-const { mockCheck, mockUpdate } = vi.hoisted(() => {
+const { mockCheck, mockUpdate, mockRelaunch } = vi.hoisted(() => {
   const mockUpdate = {
     version: '0.1.42',
     currentVersion: '0.1.13',
@@ -14,6 +14,7 @@ const { mockCheck, mockUpdate } = vi.hoisted(() => {
   return {
     mockCheck: vi.fn(),
     mockUpdate: mockUpdate as any,
+    mockRelaunch: vi.fn(),
   };
 });
 
@@ -32,6 +33,10 @@ vi.mock('sonner', () => ({
 
 vi.mock('@tauri-apps/plugin-updater', () => ({
   check: mockCheck,
+}));
+
+vi.mock('@tauri-apps/plugin-process', () => ({
+  relaunch: mockRelaunch,
 }));
 
 vi.mock('@tauri-apps/api/app', () => ({
@@ -57,6 +62,8 @@ beforeEach(() => {
   mockCheck.mockResolvedValue(mockUpdate);
   mockedToast.dismiss.mockReset();
   mockedToast.error.mockReset();
+  mockRelaunch.mockReset();
+  mockRelaunch.mockResolvedValue(undefined);
 });
 
 describe('UpdateToast', () => {
@@ -88,14 +95,14 @@ describe('UpdateToast', () => {
     expect(mockedToast.dismiss).toHaveBeenCalledWith('nicessh-update');
   });
 
-  it('Restart button dismisses the toast (no @tauri-apps/plugin-process dep needed)', async () => {
+  it('Restart button calls relaunch() to apply the installed binary', async () => {
     render(<UpdateToast version="0.1.42" />);
     fireEvent.click(screen.getByText('[t:update.toast.update]'));
     await waitFor(() =>
       expect(screen.getByText('[t:update.toast.restart]')).toBeInTheDocument()
     );
     fireEvent.click(screen.getByText('[t:update.toast.restart]'));
-    expect(mockedToast.dismiss).toHaveBeenCalledWith('nicessh-update');
+    await waitFor(() => expect(mockRelaunch).toHaveBeenCalledTimes(1));
   });
 
   it('download failure shows toast.error and re-enables the update button', async () => {

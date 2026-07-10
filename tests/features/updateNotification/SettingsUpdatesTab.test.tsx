@@ -1,7 +1,7 @@
 import { describe, it, expect, vi, beforeEach } from 'vitest';
 import { render, screen, fireEvent, waitFor } from '@testing-library/react';
 
-const { mockCheck, mockUpdate } = vi.hoisted(() => {
+const { mockCheck, mockUpdate, mockRelaunch } = vi.hoisted(() => {
   const mockUpdate = {
     version: '0.1.42',
     currentVersion: '0.1.13',
@@ -11,7 +11,7 @@ const { mockCheck, mockUpdate } = vi.hoisted(() => {
     downloadAndInstall: vi.fn(),
     close: vi.fn(),
   };
-  return { mockCheck: vi.fn(), mockUpdate: mockUpdate as any };
+  return { mockCheck: vi.fn(), mockUpdate: mockUpdate as any, mockRelaunch: vi.fn() };
 });
 
 vi.mock('react-i18next', () => ({
@@ -31,6 +31,10 @@ vi.mock('@tauri-apps/plugin-updater', () => ({
   check: mockCheck,
 }));
 
+vi.mock('@tauri-apps/plugin-process', () => ({
+  relaunch: mockRelaunch,
+}));
+
 vi.mock('@tauri-apps/api/app', () => ({
   getVersion: vi.fn().mockResolvedValue('0.1.13'),
 }));
@@ -47,7 +51,9 @@ beforeEach(() => {
   mockUpdate.downloadAndInstall.mockResolvedValue(undefined);
   mockUpdate.close.mockResolvedValue(undefined);
   mockCheck.mockResolvedValue(null);
-  
+  mockRelaunch.mockReset();
+  mockRelaunch.mockResolvedValue(undefined);
+
   // Mock global fetch
   global.fetch = vi.fn().mockResolvedValue({
     ok: true,
@@ -110,5 +116,20 @@ describe('SettingsUpdatesTab', () => {
     expect(toggle).toBeChecked();
     fireEvent.click(toggle);
     expect(localStorage.getItem(LS_KEYS.notifyOnUpdate)).toBe('false');
+  });
+
+  it('Restart button calls relaunch() once the update is ready', async () => {
+    mockCheck.mockResolvedValue(mockUpdate);
+    render(<SettingsUpdatesTab />);
+    fireEvent.click(screen.getByText('[t:settings.updates.check]'));
+    await waitFor(() =>
+      expect(screen.getByText('[t:settings.updates.update]')).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByText('[t:settings.updates.update]'));
+    await waitFor(() =>
+      expect(screen.getByText('[t:update.toast.restart]')).toBeInTheDocument()
+    );
+    fireEvent.click(screen.getByText('[t:update.toast.restart]'));
+    await waitFor(() => expect(mockRelaunch).toHaveBeenCalledTimes(1));
   });
 });

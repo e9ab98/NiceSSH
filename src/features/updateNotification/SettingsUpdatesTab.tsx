@@ -1,4 +1,5 @@
 import { useEffect, useState } from 'react';
+import { relaunch } from '@tauri-apps/plugin-process';
 import { useTranslation } from 'react-i18next';
 import { toast } from 'sonner';
 import { Card } from '../../components/ui/card';
@@ -60,10 +61,16 @@ export function SettingsUpdatesTab() {
     }
   };
 
-  // Tauri 2 relaunch() lives in @tauri-apps/plugin-process (not bundled
-  // here); the user closes the app to apply the installed binary.
-  const onRestart = () => {
-    toast.success(t('settings.updates.restartHint'));
+  // @tauri-apps/plugin-process's relaunch() restarts the app into the
+  // newly installed binary. On failure (e.g. permission denied) we fall
+  // back to the manual hint so the user still knows what to do.
+  const onRestart = async () => {
+    try {
+      await relaunch();
+    } catch (err) {
+      console.error('relaunch failed', err);
+      toast.error(t('settings.updates.restartHint'));
+    }
   };
 
   const onNotifyToggle = (next: boolean) => {
