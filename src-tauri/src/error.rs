@@ -7,6 +7,8 @@ pub enum AppError {
     NotFound(String),
     #[error("permission denied: {0}")]
     PermissionDenied(String),
+    #[error("validation: {0}")]
+    Validation(String),
     #[error("invalid SSH config at line {line}: {message}")]
     SshConfigParse { line: usize, message: String },
     #[error("git command failed: {0}")]

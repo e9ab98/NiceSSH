@@ -4,6 +4,7 @@ import { open as openDirDialog } from '@tauri-apps/plugin-dialog';
 import { CircleSlash, AlertTriangle, FolderGit2, UserCircle2, MousePointer, type LucideIcon } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
+import { ProtocolBadge } from '../components/protocolBadge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip';
 import { useProjectsStore } from '../store/projects';
 import { useIdentitiesStore } from '../store/identities';
@@ -13,6 +14,8 @@ import { tryUnlockKey, isKeyEncrypted } from '../ipc/sshAdd';
 import { IdentitySwitcherDialog } from '../features/identitySwitcher/IdentitySwitcherDialog';
 import { RepoAuditDialog } from '../features/repoAudit/RepoAuditDialog';
 import { PassphraseDialog } from '../features/passphraseDialog/PassphraseDialog';
+import { RemoteUrlPromptDialog } from '../features/remotePrompt/RemoteUrlPromptDialog';
+import { HttpsBindConfirmDialog, type HttpsBindChoice } from '../features/httpsBindConfirm/HttpsBindConfirmDialog';
 import { ConnectionTesterDialog } from '../features/connectionTester/ConnectionTesterDialog';
 import { ContextMenu } from '../components/ContextMenu';
 import { toast } from 'sonner';
@@ -40,6 +43,22 @@ function detectIdentity(
     return { kind: 'untracked', keyPath: repoConfig.sshKeyPath };
   }
   return { kind: 'none' };
+}
+
+/// Best-effort transformation of an HTTPS URL into its SSH form.
+/// Returns null if the URL shape is too exotic to safely auto-convert
+/// (in which case we leave the user to type a URL themselves). The
+/// rule: replace `https?://HOST/` with `git@HOST:`, dropping any
+/// leading `www.`, and keeping the path verbatim. Trailing `.git`
+/// is preserved.
+function deriveSshUrlFromHttps(remoteUrl: string | null | undefined): string | null {
+  if (!remoteUrl) return null;
+  const m = remoteUrl.trim().match(/^https?:\/\/([^\/]+)\/(.+?)(?:\.git)?$/);
+  if (!m) return null;
+  const host = m[1].replace(/^www\./, '');
+  const path = m[2];
+  if (!host.includes('.')) return null; // bare hostname is suspicious
+  return `git@${host}:${path}.git`;
 }
 
 function deriveName(p: string): string {
@@ -99,7 +118,7 @@ export function ProjectsView() {
       try {
         out[p.id] = await getRepoGitConfig(p.path);
       } catch {
-        out[p.id] = { hasConfig: false, userName: null, userEmail: null, sshKeyPath: null, managedByNicessh: false, sshCommandCount: 0 };
+        out[p.id] = { hasConfig: false, userName: null, userEmail: null, sshKeyPath: null, managedByNicessh: false, sshCommandCount: 0, remoteUrl: null, remoteProtocol: null };
       }
     }
     setRepoConfigs(out);
@@ -119,7 +138,7 @@ export function ProjectsView() {
         try {
           out[p.id] = await getRepoGitConfig(p.path);
         } catch {
-          out[p.id] = { hasConfig: false, userName: null, userEmail: null, sshKeyPath: null, managedByNicessh: false, sshCommandCount: 0 };
+          out[p.id] = { hasConfig: false, userName: null, userEmail: null, sshKeyPath: null, managedByNicessh: false, sshCommandCount: 0, remoteUrl: null, remoteProtocol: null };
         }
       }
       if (!cancelled) setRepoConfigs(out);
@@ -153,6 +172,116 @@ export function ProjectsView() {
     return match?.id ?? null;
   })();
 
+  // Controls the modal that prompts for a missing remote URL.
+  // We track *which* project's bind was suspended so the dialog can
+  // ask for the URL and then retry the bind with a fresh protocol
+  // decision. The pair (projectId, identityId) lives in state so
+  // cancel-equivalent (cancel) just clears the state without retrying.
+  const [remotePrompt, setRemotePrompt] = useState<{
+    projectId: string;
+    identityId: string;
+    projectPath: string;
+    /// When set, the RemoteUrlPromptDialog renders with this URL
+    /// pre-filled. Used both by the "this project has no remote"
+    /// flow (no prefill) and by the "switch this HTTPS remote to
+    /// SSH…" flow (prefilled with `deriveSshUrlFromHttps(...)`).
+    prefillUrl?: string;
+  } | null>(null);
+  // Pending toast i18n key to show *after* a successful retry, so the
+  // 'identity applied' message reflects the actual outcome (SSH vs
+  // user-only vs needs-remote).
+  // Holds the "we just bound an identity and noticed the remote is
+  // HTTPS" request so the warning dialog can render with full
+  // context. Cleared on dialog close / on the user picking any
+  // option. `repoSnapshot` captures the SSH-able URL to use as a
+  // suggestion when the user picks "switch remote to SSH".
+  const [httpsConfirm, setHttpsConfirm] = useState<{
+    projectId: string;
+    identityId: string;
+    projectName: string;
+    projectPath: string;
+    protocol: 'https' | 'http' | null;
+    remoteUrl: string | null;
+  } | null>(null);
+
+  const bindIdentity = async (projectId: string, identityId: string, projectPath: string) => {
+    const outcome = await applyIdentityToRepo(projectId, identityId);
+    if (outcome === 'needs-remote') {
+      toast(t('projects.outcome.needs-remote'));
+      setRemotePrompt({ projectId, identityId, projectPath });
+      return;
+    }
+    if (outcome === 'user-only') {
+      // Surface the warning dialog instead of a tiny toast. We need
+      // the project's *display* name + the current remote URL for
+      // context, so peek at the in-memory store + cached config.
+      const projectName = projects.find((p) => p.id === projectId)?.name ?? '';
+      const cfg = repoConfigs[projectId];
+      // The interface for remoteProtocol is 'ssh' | 'https' | 'git'
+      // | 'unknown' | null — we treat anything that's not 'ssh'/'git'
+      // as "uses git-credential" for the purpose of this warning,
+      // and surface the literal 'https' as the heading text (the
+      // classifier groups plain http:// and https:// together).
+      const protocol: 'https' | null =
+        cfg && cfg.remoteProtocol !== 'ssh' && cfg.remoteProtocol !== 'git' && cfg.remoteProtocol !== null
+          ? 'https'
+          : null;
+      setHttpsConfirm({
+        projectId,
+        identityId,
+        projectName,
+        projectPath,
+        protocol,
+        remoteUrl: cfg?.remoteUrl ?? null,
+      });
+      return;
+    }
+    // SSH-style: identity fully bound (user + sshCommand). Update
+    // the project store so subsequent reloads see this binding, then
+    // toast success. The "needs-remote" and "user-only" branches
+    // route through dialogs and update the store from inside their
+    // confirm handlers — so centralising assign() here keeps the
+    // store in sync regardless of which branch the user lands in.
+    try { await assign(projectId, identityId); } catch { /* no-op */ }
+    toast.success(t('projects.outcome.ssh-style'));
+  };
+
+  const handleHttpsConfirmChoice = async (choice: HttpsBindChoice) => {
+    if (!httpsConfirm) return;
+    const { projectId, identityId, projectPath, remoteUrl } = httpsConfirm;
+    if (choice === 'cancel') {
+      // Bind has already happened server-side. Closing the dialog
+      // is the only honest action — we surface a soft toast so the
+      // user knows the bind took effect even though they backed out
+      // of the optional SSH switch.
+      toast.success(t('projects.outcome.user-only'));
+      setHttpsConfirm(null);
+      return;
+    }
+    if (choice === 'continue') {
+      // Identity stays as applied (user-only). Mark in store for
+      // consistency with the existing switcher flow.
+      try { await assign(projectId, identityId); } catch { /* already */ }
+      toast.success(t('projects.outcome.user-only'));
+      setHttpsConfirm(null);
+      return;
+    }
+    // choice === 'change-remote': open RemoteUrlPromptDialog with a
+    // pre-filled SSH URL. Once it saves, we go through the regular
+    // needs-remote retry path so the *next* applyIdentityToRepo call
+    // has a real URL on disk to read.
+    const ssh = deriveSshUrlFromHttps(remoteUrl);
+    setHttpsConfirm(null);
+    setRemotePrompt({
+      projectId,
+      identityId,
+      projectPath,
+      // Carry the suggested SSH URL through the existing
+      // RemoteUrlPromptDialog initialUrl plumbing.
+      prefillUrl: ssh ?? undefined,
+    });
+  };
+
   const handleAdd = async () => {
     if (adding) return;
     setAdding(true);
@@ -165,8 +294,7 @@ export function ProjectsView() {
       }
       const project = await add({ name: deriveName(picked), path: picked, identityId: defaultIdentityId });
       if (defaultIdentityId) {
-        await applyIdentityToRepo(project.id, defaultIdentityId);
-        toast.success(t('projects.addedWithIdentity'));
+        await bindIdentity(project.id, defaultIdentityId, project.path);
       } else {
         toast.success(t('projects.added'));
       }
@@ -180,10 +308,14 @@ export function ProjectsView() {
 
   const performSwitch = async (targetIdentityId: string) => {
     if (!selected) return;
-    await applyIdentityToRepo(selected.id, targetIdentityId);
-    await assign(selected.id, targetIdentityId);
-    const t2 = identities.find((i) => i.id === targetIdentityId);
-    if (t2) toast.success(t('projects.switchedTo', { label: t2.label }));
+    // Route through bindIdentity so that the HTTPS warning dialog,
+    // remote URL prompt, and success toast all behave the same way
+    // regardless of whether the user is binding an identity for the
+    // first time, switching an existing one, or retrying after a
+    // remote-URL fix. The store update (assign) happens inside
+    // bindIdentity — so we must not call assign() here (it would be
+    // a redundant optimistic write that could mask dialog-flow bugs).
+    await bindIdentity(selected.id, targetIdentityId, selected.path);
   };
 
   const handleSelect = async (targetIdentityId: string) => {
@@ -407,6 +539,46 @@ export function ProjectsView() {
           />
         )}
       </div>
+
+      {/* Remote URL prompt: shown when applyIdentityToRepo detected
+          that the repo has no `[remote ...] url`, so it could not
+          decide between ssh-style and user-only binding. After the
+          user provides a URL, we retry the bind. */}
+      <RemoteUrlPromptDialog
+        open={!!remotePrompt}
+        onOpenChange={(v) => {
+          if (!v) setRemotePrompt(null);
+        }}
+        projectPath={remotePrompt?.projectPath ?? ''}
+        initialUrl={remotePrompt?.prefillUrl}
+        onSaved={async () => {
+          if (!remotePrompt) return;
+          const { projectId, identityId } = remotePrompt;
+          setRemotePrompt(null);
+          // Re-fetch repo config so the rest of the UI sees the
+          // freshly-written remote URL immediately.
+          await refreshRepoConfigs();
+          // bindIdentity handles the store update internally on the
+          // happy (ssh-style) path via assign(). If it returns
+          // needs-remote again we surface that toast — though that
+          // should not happen now that we just persisted a URL.
+          await bindIdentity(projectId, identityId, remotePrompt.projectPath);
+        }}
+      />
+
+      {/* HTTPS bind warning. Shown when bindIdentity noticed the
+          project’s remote is HTTP(S) and wrote only the [user]
+          block. The user can pick: continue as-is, switch the
+          remote to SSH (which opens RemoteUrlPromptDialog above
+          with a pre-filled URL), or dismiss. */}
+      <HttpsBindConfirmDialog
+        open={!!httpsConfirm}
+        onOpenChange={(v) => { if (!v) setHttpsConfirm(null); }}
+        projectName={httpsConfirm?.projectName}
+        protocol={httpsConfirm?.protocol ?? undefined}
+        remoteUrl={httpsConfirm?.remoteUrl ?? null}
+        onChoose={handleHttpsConfirmChoice}
+      />
     </TooltipProvider>
   );
 }
@@ -437,6 +609,38 @@ function ProjectDetail({ project, detected, hasIdentities, repoConfig, onSwitch,
       <div>
         <h1 className="text-xl font-extrabold text-text-0">{project.name}</h1>
         <p className="text-xs text-text-2 font-mono truncate mt-0.5">{project.path}</p>
+      </div>
+
+      {/* Remote */}
+      <div>
+        <SectionLabel>{t('projects.detail.remote')}</SectionLabel>
+        <div className="rounded-xl border border-border bg-bg-0 p-3 flex flex-col gap-1.5 text-sm">
+          {repoConfig?.remoteUrl ? (
+            <>
+              <div className="flex items-center gap-2">
+                <ProtocolBadge protocol={repoConfig.remoteProtocol} t={t} />
+                <span className="text-xs font-mono text-text-1 truncate flex-1 min-w-0">{repoConfig.remoteUrl}</span>
+              </div>
+              {repoConfig.remoteProtocol === 'https' && (
+                <p className="text-xs text-warning mt-0.5">
+                  {t('projects.detail.remoteHttpsNote')}
+                </p>
+              )}
+              {repoConfig.remoteProtocol === 'unknown' && (
+                <p className="text-xs text-warning mt-0.5">
+                  {t('projects.detail.remoteUnknownNote')}
+                </p>
+              )}
+            </>
+          ) : (
+            <div className="flex items-center gap-2">
+              <ProtocolBadge protocol={null} t={t} />
+              <span className="text-xs text-text-2">
+                {t('projects.detail.remoteNone')}
+              </span>
+            </div>
+          )}
+        </div>
       </div>
 
       {/* Git Identity */}

@@ -11,8 +11,31 @@ pub fn is_git_repo(path: String) -> Result<bool> {
     Ok(Path::new(&path).join(".git").exists())
 }
 
+/// Outcome of `apply_identity_to_repo` that the UI needs to know in
+/// order to surface a follow-up dialog (most commonly: "please fill
+/// in this project's remote URL before I can bind an identity to
+/// it"). The string is also stored in audit history so users can later
+/// inspect why a project ended up with a particular `.git/config`
+/// shape.
+#[derive(serde::Serialize, Debug, Clone, PartialEq, Eq)]
+#[serde(rename_all = "kebab-case")]
+pub enum BindOutcome {
+    /// Existing behavior: a full `[user]` + `[core] sshCommand`
+    /// splice was applied. Covers SSH, git://, and
+    /// unclassifiable remote URLs (conservatively behaves like SSH).
+    SshStyle,
+    /// HTTPS / HTTP remote — we wrote only the `[user]` block to
+    /// `.git/config` and the user-only sub-gitconfig. No sshCommand
+    /// line is added anywhere.
+    UserOnly,
+    /// The repo has no `[remote ...] url` line at all. We did not
+    /// modify `.git/config`. The UI is expected to ask the user to
+    /// provide a remote URL (then call `write_repo_remote` and retry).
+    NeedsRemote,
+}
+
 #[tauri::command]
-pub fn apply_identity_to_repo(project_id: String, identity_id: String) -> Result<()> {
+pub fn apply_identity_to_repo(project_id: String, identity_id: String) -> Result<BindOutcome> {
     let cfg = config_store::read()?;
     let identity = cfg
         .identities
@@ -24,24 +47,252 @@ pub fn apply_identity_to_repo(project_id: String, identity_id: String) -> Result
         .iter()
         .find(|p| p.id == project_id)
         .ok_or_else(|| AppError::NotFound(format!("project {}", project_id)))?;
-    write_repo_gitconfig(Path::new(&project.path), identity)?;
-    if let Some(match_path) = &identity.match_path {
-        if !match_path.is_empty() {
-            git_config::append_include_if(match_path, &identity.label)?;
+    let repo_path = Path::new(&project.path);
+
+    // Single source of truth for "what protocol does this repo
+    // actually speak to its remote with". We deliberately read the
+    // file directly rather than calling `get_repo_git_config` to
+    // avoid an extra serde round-trip and to keep the branch logic in
+    // one place.
+    let repo_cfg = get_repo_git_config_inner(repo_path)?;
+    let protocol = repo_cfg.remote_protocol.as_deref().unwrap_or("unknown");
+
+    // Decide the bind shape *before* writing anything. The match
+    // returns one of three outcomes; in the "needs remote" case we
+    // intentionally leave both `.git/config` and the sub-gitconfig
+    // untouched so the UI can prompt for a URL and retry.
+    let outcome = match protocol {
+        "https" => {
+            write_repo_user_only(repo_path, identity)?;
+            BindOutcome::UserOnly
+        }
+        "ssh" | "git" => {
+            write_repo_gitconfig(repo_path, identity)?;
+            BindOutcome::SshStyle
+        }
+        // "unknown" or "no remote" both fall through here.
+        _ => {
+            if repo_cfg.remote_url.is_none() {
+                BindOutcome::NeedsRemote
+            } else {
+                // Remote URL exists but is exotic (e.g. file://). To
+                // stay on the safe side we treat it like ssh-style:
+                // write sshCommand so SSH-bound identities still
+                // work if the user later moves the remote to ssh://.
+                write_repo_gitconfig(repo_path, identity)?;
+                BindOutcome::SshStyle
+            }
+        }
+    };
+
+    // includeIf is universally useful (it routes user.name/email by
+    // directory, independent of protocol), so we add it whenever a
+    // match_path is configured and we actually wrote something.
+    if outcome != BindOutcome::NeedsRemote {
+        if let Some(match_path) = &identity.match_path {
+            if !match_path.is_empty() {
+                git_config::append_include_if(match_path, &identity.label)?;
+            }
+        }
+        let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
+        match outcome {
+            BindOutcome::SshStyle => git_config::write_identity_subfile(
+                &identity.label,
+                &identity.user_name,
+                &identity.user_email,
+                &full_key,
+            )?,
+            BindOutcome::UserOnly => git_config::write_identity_subfile_user_only(
+                &identity.label,
+                &identity.user_name,
+                &identity.user_email,
+                &full_key,
+            )?,
+            BindOutcome::NeedsRemote => {}
         }
     }
-    // `key_path` is a directory; the actual private key is at
-    // `<key_path>/<label>`. Resolve the full file path so the
-    // per-identity gitconfig (`~/.gitconfig-<label>`) and the repo
-    // `.git/config` sshCommand both point at a real file.
-    let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
-    git_config::write_identity_subfile(
-        &identity.label,
-        &identity.user_name,
-        &identity.user_email,
-        &full_key,
+    Ok(outcome)
+}
+
+/// Inner parser reused by `apply_identity_to_repo` so we do not need
+/// to invoke the Tauri command (`#[tauri::command]`) machinery just
+/// to peek at the file. Mirrors the public `get_repo_git_config` but
+/// returns the same struct the command returns.
+fn get_repo_git_config_inner(repo_path: &Path) -> Result<RepoGitConfig> {
+    let gitconfig = repo_path.join(".git").join("config");
+    if !gitconfig.exists() {
+        return Ok(RepoGitConfig {
+            has_config: false,
+            user_name: None,
+            user_email: None,
+            ssh_key_path: None,
+            managed_by_nicessh: false,
+            ssh_command_count: 0,
+            remote_url: None,
+            remote_protocol: None,
+        });
+    }
+    // The `#[tauri::command]` decorator strips attributes from the
+    // body, so we cannot share code with `get_repo_git_config` via a
+    // helper that re-uses its locals. For simplicity here we call the
+    // same string and re-parse it via a tiny private parser that
+    // mimics `get_repo_git_config`. This keeps the audit-dialog and
+    // the bind path independent (one can fail without breaking the
+    // other) and avoids turning `get_repo_git_config` into a public
+    // API just to share the parsing.
+    let raw = std::fs::read_to_string(&gitconfig)?;
+    let mut remote_url = None;
+    let mut in_remote_section = false;
+    let mut section = String::new();
+    let mut ssh_command_count = 0usize;
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() || trimmed.starts_with('#') {
+            continue;
+        }
+        if let Some(rest) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            let header = rest.trim().to_ascii_lowercase();
+            in_remote_section = header.starts_with("remote");
+            section = header;
+            continue;
+        }
+        let (k, v) = match trimmed.split_once('=') {
+            Some((k, v)) => (k.trim(), v.trim().trim_matches('"')),
+            None => continue,
+        };
+        if section == "core" && k.eq_ignore_ascii_case("sshcommand") {
+            ssh_command_count += 1;
+            continue;
+        }
+        if in_remote_section && k.eq_ignore_ascii_case("url") && remote_url.is_none() {
+            remote_url = Some(v.to_string());
+        }
+    }
+    let remote_protocol = remote_url.as_deref().map(git_config::classify_remote_url);
+    Ok(RepoGitConfig {
+        has_config: true,
+        user_name: None,
+        user_email: None,
+        ssh_key_path: None,
+        managed_by_nicessh: raw.contains("nicessh-managed"),
+        ssh_command_count,
+        remote_url,
+        remote_protocol: remote_protocol.map(|s| s.to_string()),
+    })
+}
+
+
+/// Write or replace `[remote "<name>"]` in a repo's `.git/config`.
+///
+/// Used as the second step of bind-after-promote: when
+/// `apply_identity_to_repo` returns `BindOutcome::NeedsRemote`, the
+/// UI collects a URL from the user (preselected by protocol) and
+/// calls this command. After it returns, the UI retries
+/// `apply_identity_to_repo` — at which point the new remote URL is
+/// already in place and the protocol-aware branch logic kicks in.
+///
+/// The command:
+///   - refuses if the supplied URL fails `git_config::classify_remote_url`,
+///     so we never persist a typo like "htps://..." that
+///     `apply_identity_to_repo` would later classify as `"unknown"`
+///     and silently fall back to ssh-style;
+///   - replaces any existing remote of the same `name` while leaving
+///     other remotes and the `fetch = ...` line untouched;
+///   - if no remote of that name exists yet, appends a fresh block
+///     with a sensible default `fetch` refspec;
+///   - records the change in history via `history::commit_change` so
+///     users can roll it back from the history viewer.
+#[tauri::command]
+pub fn write_repo_remote(path: String, name: Option<String>, url: String) -> Result<String> {
+    let url = url.trim().to_string();
+    if url.is_empty() {
+        return Err(AppError::Validation("remote URL must not be empty".into()));
+    }
+    let protocol = git_config::classify_remote_url(&url);
+    if protocol == "unknown" {
+        return Err(AppError::Validation(format!(
+            "unrecognised remote URL: {url} (expected git@host:path, ssh://, https://, http://, or git://)",
+        )));
+    }
+    let remote_name = name.unwrap_or_else(|| "origin".to_string());
+    if remote_name.is_empty() {
+        return Err(AppError::Validation("remote name must not be empty".into()));
+    }
+    let repo = Path::new(&path);
+    let gitconfig = repo.join(".git").join("config");
+    if !gitconfig.exists() {
+        return Err(AppError::NotFound(format!("{}/.git/config", repo.display())));
+    }
+    let raw = std::fs::read_to_string(&gitconfig)?;
+    let new_raw = splice_or_append_remote(&raw, &remote_name, &url);
+    if new_raw == raw {
+        return Ok(protocol.to_string());
+    }
+    crate::history::commit_change(
+        "write_repo_remote",
+        &format!("Wrote [remote \"{}\"] url = {}", remote_name, url),
+        std::iter::once((
+            gitconfig.to_string_lossy().to_string(),
+            crate::history::FileChange {
+                before: raw,
+                after: new_raw.clone(),
+            },
+        ))
+        .collect(),
     )?;
-    Ok(())
+    crate::fs_safety::atomic_write(&gitconfig, &new_raw, 0o644)?;
+    Ok(protocol.to_string())
+}
+
+/// Pure parser-helper for `write_repo_remote`. Replaces the `url =`
+/// line of an existing `[remote "<name>"]` block (preserving any
+/// other body lines such as `fetch = ...`), or appends a fresh block
+/// at the end of the file if no such block exists.
+fn splice_or_append_remote(raw: &str, remote_name: &str, url: &str) -> String {
+    let mut lines: Vec<String> = raw.lines().map(|s| s.to_string()).collect();
+    let header_re = format!("[remote \"{}\"]", remote_name);
+    let mut i = 0usize;
+    let mut found = false;
+    while i < lines.len() {
+        if lines[i].trim() == header_re {
+            found = true;
+            // Walk through the body of this remote block, looking
+            // for the first `url =` line and replacing it in place.
+            let mut j = i + 1;
+            let mut replaced = false;
+            while j < lines.len() {
+                let t = lines[j].trim_start();
+                if t.starts_with('[') && lines[j].trim_end().ends_with(']') {
+                    break;
+                }
+                if !replaced && t.split_once('=').map(|(k, _)| k.trim().eq_ignore_ascii_case("url")).unwrap_or(false) {
+                    lines[j] = format!("    url = {}", url);
+                    replaced = true;
+                    j += 1;
+                    continue;
+                }
+                j += 1;
+            }
+            if !replaced {
+                // No existing url — insert one as the first body line.
+                lines.insert(i + 1, format!("    url = {}", url));
+            }
+            break;
+        }
+        i += 1;
+    }
+    if !found {
+        // Trim trailing blank lines, append a fresh block.
+        while lines.last().map(|s| s.trim().is_empty()).unwrap_or(false) {
+            lines.pop();
+        }
+        lines.push(header_re);
+        lines.push(format!("    url = {}", url));
+        lines.push("    fetch = +refs/heads/*:refs/remotes/*/*".to_string());
+    }
+    let mut joined = lines.join("\n");
+    joined.push('\n');
+    joined
 }
 
 fn write_repo_gitconfig(repo_path: &Path, identity: &Identity) -> Result<()> {
@@ -262,6 +513,114 @@ fn splice_identity_into_config(
     joined
 }
 
+/// Variant of `splice_identity_into_config` used for HTTPS-bound
+/// projects. We deliberately **do not** touch `[core]` — no sshCommand
+/// is appended, no sshCommand is removed. Only the managed `[user]`
+/// block is replaced at the end of the file.
+///
+/// Rationale: pre-this-feature builds wrote sshCommand into every
+/// `.git/config`, even HTTPS ones. We must not silently *delete* an
+/// existing sshCommand (that would be a behavioural surprise for any
+/// user who later migrates the remote to SSH and expected the line to
+/// still be there). We also must not *add* one (it would be dead code
+/// that the audit dialog would flag). The cleanest contract is:
+/// "splice_user_only_into_config edits the `[user]` block and nothing
+/// else". A separate Clean action in the audit dialog continues to
+/// scrub stale lines for users who explicitly ask for it.
+fn splice_user_only_into_config(raw: &str, user_name: &str, user_email: &str) -> String {
+    fn is_header(s: &str) -> bool {
+        let t = s.trim_start();
+        t.starts_with('[') && s.trim_end().ends_with(']')
+    }
+    fn header_name(s: &str) -> Option<String> {
+        let t = s.trim_start();
+        if !(t.starts_with('[') && s.trim_end().ends_with(']')) {
+            return None;
+        }
+        Some(t[1..t.len() - 1].trim().to_ascii_lowercase())
+    }
+    // Single pass. Two outcomes:
+    //   - PassThrough: emit the line verbatim.
+    //   - ManagedUser{Header,Body}: drop (we are about to append a
+    //     fresh [user] at the end of the file).
+    // Every other section (including [core] with sshCommand, and
+    // [remote "..."], etc.) is left entirely alone.
+    enum LineKind { Pass, ManagedUserHeader, ManagedUserBody }
+    let lines: Vec<&str> = raw.lines().collect();
+    let mut classified: Vec<LineKind> = Vec::with_capacity(lines.len());
+    let mut in_user = false;
+    for line in &lines {
+        if is_header(line) {
+            in_user = matches!(
+                header_name(line).unwrap_or_default().as_str(),
+                "user"
+            );
+            classified.push(if in_user {
+                LineKind::ManagedUserHeader
+            } else {
+                LineKind::Pass
+            });
+            continue;
+        }
+        classified.push(if in_user {
+            LineKind::ManagedUserBody
+        } else {
+            LineKind::Pass
+        });
+    }
+    let mut out: Vec<String> = Vec::with_capacity(lines.len() + 4);
+    for (line, kind) in lines.iter().zip(classified.iter()) {
+        match kind {
+            LineKind::Pass => out.push(line.to_string()),
+            LineKind::ManagedUserHeader | LineKind::ManagedUserBody => {}
+        }
+    }
+    // Append the fresh [user] block. This intentionally does *not*
+    // touch [core], so any pre-existing sshCommand lines survive.
+    out.push("[user]".to_string());
+    out.push(format!("    name = {}", user_name));
+    out.push(format!("    email = {}", user_email));
+    while out.last().map(|s| s.trim().is_empty()).unwrap_or(false) {
+        out.pop();
+    }
+    let mut joined = out.join("\n");
+    joined.push('\n');
+    joined
+}
+
+fn write_repo_user_only(repo_path: &Path, identity: &Identity) -> Result<()> {
+    let gitconfig = repo_path.join(".git").join("config");
+    if !gitconfig.exists() {
+        return Err(AppError::NotFound(format!(
+            "{}/.git/config",
+            repo_path.display()
+        )));
+    }
+    let raw = std::fs::read_to_string(&gitconfig)?;
+    let new_raw = splice_user_only_into_config(
+        &raw,
+        &identity.user_name,
+        &identity.user_email,
+    );
+    if new_raw == raw {
+        return Ok(());
+    }
+    crate::history::commit_change(
+        "apply_identity_to_repo_user_only",
+        &format!("Applied identity {} to repo (user-only, HTTPS remote)", identity.label),
+        std::iter::once((
+            gitconfig.to_string_lossy().to_string(),
+            crate::history::FileChange {
+                before: raw,
+                after: new_raw.clone(),
+            },
+        ))
+        .collect(),
+    )?;
+    crate::fs_safety::atomic_write(&gitconfig, &new_raw, 0o644)?;
+    Ok(())
+}
+
 /// The caller is expected to `strip + new_block`, so the resulting
 /// file ends up with exactly one managed block (the new one).
 #[allow(dead_code)]
@@ -472,6 +831,14 @@ pub struct RepoGitConfig {
     /// nicessh-managed repo has exactly 1; older builds (or stray
     /// writes) leave multiple behind.
     pub ssh_command_count: usize,
+    /// First `[remote "<name>"] url = ...` value found in the file,
+    /// or `None` if the repo has no remote configured. Only the
+    /// first remote is reported (typically `origin`).
+    pub remote_url: Option<String>,
+    /// Protocol of `remote_url` as classified by
+    /// `git_config::classify_remote_url`: `"ssh"`, `"https"`,
+    /// `"git"`, or `"unknown"`. `None` when `remote_url` is `None`.
+    pub remote_protocol: Option<String>,
 }
 
 /// Read the *current* git state of a repo (whatever is on disk, not what
@@ -490,6 +857,8 @@ pub fn get_repo_git_config(path: String) -> Result<RepoGitConfig> {
             ssh_key_path: None,
             managed_by_nicessh: false,
             ssh_command_count: 0,
+            remote_url: None,
+            remote_protocol: None,
         });
     }
     let raw = std::fs::read_to_string(&gitconfig)?;
@@ -497,6 +866,8 @@ pub fn get_repo_git_config(path: String) -> Result<RepoGitConfig> {
     let mut user_email = None;
     let mut ssh_key_path = None;
     let mut ssh_command_count = 0usize;
+    let mut remote_url = None;
+    let mut in_remote_section = false;
     let mut section = String::new();
     for line in raw.lines() {
         let trimmed = line.trim();
@@ -504,7 +875,17 @@ pub fn get_repo_git_config(path: String) -> Result<RepoGitConfig> {
             continue;
         }
         if let Some(rest) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
-            section = rest.trim().to_ascii_lowercase();
+            // Section header like `user`, `core`, `remote "origin"`,
+            // `branch "main"`, etc. We deliberately match the *prefix*
+            // for `[remote "..."]` so `[remote "origin"]`,
+            // `[remote "upstream"]`, and any future remote name all
+            // count. The first remote url we see wins — `[remote]`
+            // blocks under `[includeIf ...]` are not common for url
+            // declarations, but if they exist they will be picked up
+            // here too, which is fine for classification purposes.
+            let header_lower = rest.trim().to_ascii_lowercase();
+            in_remote_section = header_lower.starts_with("remote");
+            section = header_lower;
             continue;
         }
         let (k, v) = match trimmed.split_once('=') {
@@ -526,10 +907,15 @@ pub fn get_repo_git_config(path: String) -> Result<RepoGitConfig> {
                     }
                 }
             }
-            _ => {}
+            _ => {
+                if in_remote_section && k.eq_ignore_ascii_case("url") && remote_url.is_none() {
+                    remote_url = Some(v.to_string());
+                }
+            }
         }
     }
     let managed_by_nicessh = raw.contains("nicessh-managed");
+    let remote_protocol = remote_url.as_deref().map(git_config::classify_remote_url);
     Ok(RepoGitConfig {
         has_config: true,
         user_name,
@@ -537,6 +923,8 @@ pub fn get_repo_git_config(path: String) -> Result<RepoGitConfig> {
         ssh_key_path,
         managed_by_nicessh,
         ssh_command_count,
+        remote_url,
+        remote_protocol: remote_protocol.map(|s| s.to_string()),
     })
 }
 
@@ -559,6 +947,13 @@ pub struct RepoAudit {
     /// Result of `test_ssh_connection` for the bound identity, if any.
     pub ssh_test_ok: Option<bool>,
     pub ssh_test_message: Option<String>,
+    /// First remote's protocol (`"ssh"` / `"https"` / `"git"` /
+    /// `"unknown"`), surfaced from `RepoGitConfig::remote_protocol`.
+    /// `None` when the repo has no `[remote ...] url` configured.
+    /// The UI uses this to display a per-row protocol badge and to
+    /// flag the "sshCommand on an HTTPS remote" footgun.
+    pub remote_url: Option<String>,
+    pub remote_protocol: Option<String>,
 }
 
 /// Walk every project in config.json, classify its `.git/config`, and
@@ -621,6 +1016,8 @@ pub fn audit_repos(run_ssh_tests: Option<bool>) -> Result<Vec<RepoAudit>> {
             identity_label: identity.map(|i| i.label.clone()),
             ssh_test_ok: ssh_ok,
             ssh_test_message: ssh_msg,
+            remote_url: repo_cfg.remote_url.clone(),
+            remote_protocol: repo_cfg.remote_protocol.clone(),
         });
     }
     Ok(out)
@@ -635,6 +1032,8 @@ impl RepoGitConfig {
             ssh_key_path: None,
             managed_by_nicessh: false,
             ssh_command_count: 0,
+            remote_url: None,
+            remote_protocol: None,
         }
     }
 }
@@ -800,6 +1199,56 @@ mod tests {
             ).unwrap();
             let result = get_repo_git_config(repo.to_string_lossy().to_string()).unwrap();
             assert!(result.managed_by_nicessh);
+        });
+    }
+
+    #[test]
+    fn test_get_repo_git_config_parses_https_remote() {
+        with_temp_home("repo-cfg-https", || {
+            let home = std::env::var("HOME").unwrap();
+            let repo = std::path::PathBuf::from(&home).join("repo");
+            std::fs::create_dir_all(repo.join(".git")).unwrap();
+            std::fs::write(
+                repo.join(".git/config"),
+                "[user]\n    name = Alice\n    email = alice@co.com\n\
+                 [remote \"origin\"]\n    url = https://github.com/user/repo.git\n    fetch = +refs/heads/*:refs/remotes/origin/*\n\
+                 [core]\n    sshCommand = ssh -i ~/.ssh/id_alice -o IdentitiesOnly=yes\n",
+            ).unwrap();
+            let result = get_repo_git_config(repo.to_string_lossy().to_string()).unwrap();
+            assert_eq!(result.remote_url.as_deref(), Some("https://github.com/user/repo.git"));
+            assert_eq!(result.remote_protocol.as_deref(), Some("https"));
+        });
+    }
+
+    #[test]
+    fn test_get_repo_git_config_parses_ssh_remote() {
+        with_temp_home("repo-cfg-ssh", || {
+            let home = std::env::var("HOME").unwrap();
+            let repo = std::path::PathBuf::from(&home).join("repo");
+            std::fs::create_dir_all(repo.join(".git")).unwrap();
+            std::fs::write(
+                repo.join(".git/config"),
+                "[remote \"origin\"]\n    url = git@github.com:user/repo.git\n    fetch = +refs/heads/*:refs/remotes/origin/*\n",
+            ).unwrap();
+            let result = get_repo_git_config(repo.to_string_lossy().to_string()).unwrap();
+            assert_eq!(result.remote_url.as_deref(), Some("git@github.com:user/repo.git"));
+            assert_eq!(result.remote_protocol.as_deref(), Some("ssh"));
+        });
+    }
+
+    #[test]
+    fn test_get_repo_git_config_no_remote_yields_none() {
+        with_temp_home("repo-cfg-noremote", || {
+            let home = std::env::var("HOME").unwrap();
+            let repo = std::path::PathBuf::from(&home).join("repo");
+            std::fs::create_dir_all(repo.join(".git")).unwrap();
+            std::fs::write(
+                repo.join(".git/config"),
+                "[user]\n    name = Alice\n    email = alice@co.com\n[core]\n    repositoryformatversion = 0\n",
+            ).unwrap();
+            let result = get_repo_git_config(repo.to_string_lossy().to_string()).unwrap();
+            assert!(result.remote_url.is_none());
+            assert!(result.remote_protocol.is_none());
         });
     }
 
@@ -1314,5 +1763,88 @@ mod rewrite_tests {
         let after = rewrite_global_defaults(raw, &ident());
         assert!(after.contains("[user]"));
         assert!(after.contains("[core]"));
+    }
+}
+
+#[cfg(test)]
+mod https_splice_tests {
+    use super::*;
+    use crate::config_store::Identity;
+
+    fn ident_user_only() -> Identity {
+        Identity {
+            id: "i_https".into(),
+            label: "alice".into(),
+            user_name: "Alice".into(),
+            user_email: "alice@co.com".into(),
+            key_path: "~/.ssh/id_alice".into(),
+            match_path: None,
+            host_alias: None,
+            git_host: None,
+        }
+    }
+
+    #[test]
+    fn splice_user_only_replaces_user_block_keeps_core_intact() {
+        // Pre-existing .git/config with a [core] sshCommand (legacy
+        // build wrote it). user-only splice must NOT touch [core],
+        // only swap [user].
+        let raw = "[user]\n    name = Old\n    email = old@x\n[core]\n    sshCommand = ssh -i ~/.ssh/old\n\
+                   [remote \"origin\"]\n    url = https://github.com/u/r.git\n";
+        let out = splice_user_only_into_config(raw, "Alice", "alice@co.com");
+        assert!(out.contains("[user]\n    name = Alice\n    email = alice@co.com"),
+            "expected fresh user block; got: {{out}}");
+        assert!(out.contains("sshCommand = ssh -i ~/.ssh/old"),
+            "legacy sshCommand must be preserved untouched; got: {{out}}");
+        assert!(out.contains("[remote \"origin\"]"));
+        assert!(out.contains("url = https://github.com/u/r.git"));
+        assert!(!out.contains("name = Old"));
+    }
+
+    #[test]
+    fn splice_user_only_appends_user_when_missing() {
+        let raw = "[core]\n    repositoryformatversion = 0\n";
+        let out = splice_user_only_into_config(raw, "Alice", "alice@co.com");
+        assert!(out.contains("[user]\n    name = Alice\n    email = alice@co.com"));
+        assert!(!out.contains("sshCommand"), "got: {{out}}");
+    }
+
+    #[test]
+    fn splice_user_only_is_idempotent() {
+        let raw = "[user]\n    name = Alice\n    email = alice@co.com\n\
+                   [core]\n    repositoryformatversion = 0\n\
+                   [remote \"origin\"]\n    url = https://github.com/u/r.git\n";
+        let once = splice_user_only_into_config(raw, "Alice", "alice@co.com");
+        let twice = splice_user_only_into_config(&once, "Alice", "alice@co.com");
+        let user_count = twice.matches("[user]").count();
+        assert!(user_count == 1, "expected 1 [user] block, got {user_count}: {twice}");
+    }
+
+    #[test]
+    fn splice_or_append_remote_replaces_existing_url() {
+        let raw = "[remote \"origin\"]\n    url = https://github.com/old/r.git\n    fetch = +refs/heads/*:refs/remotes/origin/*\n[user]\n    name = A\n    email = a@x\n";
+        let out = splice_or_append_remote(raw, "origin", "https://github.com/new/r.git");
+        assert!(out.contains("url = https://github.com/new/r.git"), "got: {{out}}");
+        assert!(!out.contains("old/r.git"));
+        assert!(out.contains("fetch = +refs/heads/*:refs/remotes/origin/*"));
+        assert!(out.contains("[user]\n    name = A"));
+    }
+
+    #[test]
+    fn splice_or_append_remote_appends_when_missing() {
+        let raw = "[user]\n    name = A\n    email = a@x\n";
+        let out = splice_or_append_remote(raw, "upstream", "git@github.com:u/r.git");
+        assert!(out.contains("[remote \"upstream\"]"), "got: {{out}}");
+        assert!(out.contains("url = git@github.com:u/r.git"));
+        assert!(out.contains("fetch = "), "default fetch line should be appended; got: {{out}}");
+        assert!(out.contains("[user]\n    name = A"));
+    }
+
+    #[test]
+    fn splice_or_append_remote_leaves_other_remotes_alone() {
+        let raw = "[remote \"origin\"]\n    url = https://github.com/a/b.git\n[remote \"upstream\"]\n    url = https://github.com/c/d.git\n";
+        let out = splice_or_append_remote(raw, "origin", "https://github.com/a/NEW.git");
+        assert!(out.contains("url = https://github.com/a/NEW.git"));
+        assert!(out.contains("[remote \"upstream\"]\n    url = https://github.com/c/d.git"));
     }
 }

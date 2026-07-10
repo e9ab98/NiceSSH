@@ -3,8 +3,30 @@ import { useTranslation } from 'react-i18next';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { Button } from '../../components/ui/button';
 import { Badge } from '../../components/ui/badge';
+import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip';
 import { auditRepos, cleanRepoGitconfig, type RepoAudit, type RepoAuditStatus } from '../../ipc/git';
 import { toast } from 'sonner';
+
+type RemoteProtocol = 'ssh' | 'https' | 'git' | 'unknown' | null;
+
+/// Localised label lookup for the protocol badge. Kept at module
+/// scope so the audit table can render it without re-creating the
+/// helper on every render; `t()` is captured from the enclosing
+/// `useTranslation` via a thin wrapper that the component remounts
+/// per render. The returned string is one of the
+/// `repoAudit.protocol.*` keys.
+function protocolBadge(p: RemoteProtocol, t: (k: string) => string) {
+  if (p == null) {
+    return <Badge variant="default">—</Badge>;
+  }
+  const label = t(`repoAudit.protocol.${p}`);
+  const variant: 'default' | 'success' | 'warning' | 'danger' =
+    p === 'ssh' ? 'success'
+      : p === 'https' ? 'warning'
+        : p === 'git' ? 'default'
+          : 'danger';
+  return <Badge variant={variant}>{label}</Badge>;
+}
 
 interface Props {
   open: boolean;
@@ -116,8 +138,28 @@ export function RepoAuditDialog({ open, onOpenChange, onChanged }: Props) {
                       <div className="font-medium">{r.projectName}</div>
                       <div className="text-text-2 text-xs font-mono truncate max-w-xs">{r.projectPath}</div>
                     </td>
+                    <td className="p-2">{protocolBadge(r.remoteProtocol, t)}</td>
                     <td className="p-2">
-                      <Badge variant={statusVariant(r.status)}>{t(`repoAudit.status.${r.status}`)}</Badge>
+                      <div className="flex items-center gap-2">
+                        <Badge variant={statusVariant(r.status)}>{t(`repoAudit.status.${r.status}`)}</Badge>
+                        {r.remoteProtocol === 'https' && r.sshCommandCount > 0 && (
+                          <TooltipProvider>
+                            <Tooltip>
+                              <TooltipTrigger asChild>
+                                <span
+                                  aria-label={t('repoAudit.httpsKeyIgnored.title')}
+                                  className="inline-flex h-4 w-4 items-center justify-center rounded-full bg-warning text-bg-0 text-[10px] font-bold cursor-help"
+                                >
+                                  !
+                                </span>
+                              </TooltipTrigger>
+                              <TooltipContent side="top" className="max-w-xs whitespace-pre-line">
+                                {[t('repoAudit.httpsKeyIgnored.title'), t('repoAudit.httpsKeyIgnored.body')].join('\n\n')}
+                              </TooltipContent>
+                            </Tooltip>
+                          </TooltipProvider>
+                        )}
+                      </div>
                     </td>
                     <td className="p-2 text-text-1">
                       {r.identityLabel ?? (

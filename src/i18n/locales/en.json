@@ -81,7 +81,11 @@
       "userName": "user.name",
       "userEmail": "user.email",
       "sshKey": "sshKey",
-      "empty": "Select a project to view details"
+      "empty": "Select a project to view details",
+      "remote": "Remote",
+      "remoteHttpsNote": "HTTPS — SSH key will not apply on this remote.",
+      "remoteUnknownNote": "Unrecognised URL — NiceSSH could not classify it. SSH key may or may not apply.",
+      "remoteNone": "No remote configured. Bind action will ask for one."
     },
     "action": {
       "switch": "Switch identity",
@@ -90,7 +94,23 @@
     "empty": "No projects yet. Add a repo to get started.",
     "setAsGlobalDefault": "Set as global default",
     "setAsGlobalConfirm": "Set {{label}} as the global Git identity? This will affect all repositories not matched by includeIf rules.",
-    "setAsGlobalApplied": "Global default set to {{label}} ({{email}})"
+    "setAsGlobalApplied": "Global default set to {{label}} ({{email}})",
+    "remotePrompt": {
+      "title": "Project needs a remote URL",
+      "body": "NiceSSH could not find a remote in this project's .git/config, so it cannot decide whether to bind the identity via SSH or HTTPS. Please supply the remote URL.",
+      "urlLabel": "Remote URL (e.g. git@github.com:user/repo.git or https://github.com/user/repo.git)",
+      "protocolLabel": "Protocol",
+      "save": "Save and apply",
+      "cancel": "Cancel",
+      "saved": "Remote URL saved",
+      "invalidUrl": "That URL does not look like git@, ssh://, https://, http://, or git://.",
+      "needsRemote": "Project does not have a remote URL. Please add one to bind an identity."
+    },
+    "outcome": {
+      "ssh-style": "Identity applied (SSH)",
+      "user-only": "Identity applied (user only — HTTPS remote)",
+      "needs-remote": "A remote URL is required before binding"
+    }
   },
   "identities": {
     "title": "Identities",
@@ -360,6 +380,26 @@
     "status.clean": "Clean",
     "status.dirty": "Dirty (multiple sshCommand blocks)",
     "status.no-config": "No .git/config",
-    "status.no-identity": "No identity bound"
+    "status.no-identity": "No identity bound",
+    "protocol": "Protocol",
+    "protocol.ssh": "SSH",
+    "protocol.https": "HTTPS",
+    "protocol.git": "Git",
+    "protocol.unknown": "Unknown",
+    "protocol.none": "No remote",
+    "httpsKeyIgnored.title": "SSH key will not apply on this remote",
+    "httpsKeyIgnored.body": "This project's origin is HTTPS, so git push/pull will use git-credential (HTTPS uses account + password / token), and the sshCommand entry written by NiceSSH will be ignored. To make this SSH key take effect: (1) add the matching public key on your git host (GitHub / GitLab / Gitee ...), then (2) in a terminal run git remote set-url origin git@...:user/repo.git, then (3) come back and rebind the identity."
+  },
+  "httpsBindConfirm": {
+    "title": "SSH key will not apply on this remote",
+    "heading": "{{project}} uses a {{protocol}} remote.",
+    "thisProject": "This project",
+    "body1": "NiceSSH will only swap the [user] block (user.name, user.email). Anything written under [core] sshCommand is **ignored** here — this remote uses account + password (or token) authentication, not SSH.",
+    "body2": "If you want this SSH key to take effect:\n1) Add the matching public key on your git host.\n2) Switch this project's remote to an SSH URL.\n3) Then come back and bind the identity again.",
+    "continue": "Continue (user/email only)",
+    "changeRemote": "Switch remote to SSH…",
+    "cancel": "Cancel",
+    "sshUrlPrefilled": "Pre-filled SSH URL: {{url}}",
+    "switchedRemote": "Remote URL saved. Re-applying identity…"
   }
 }

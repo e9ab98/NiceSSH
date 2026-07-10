@@ -157,18 +157,20 @@ cd NiceSSH
 pnpm install
 cargo install tauri-cli --version "^2.0" --locked
 cargo tauri dev
+
+pnpm tauri dev
 ```
 
 首次 `cargo build` 会拉取约 1000 个 crate,耗时 5–10 分钟。之后的构建会很快。
 
 ### 运行测试
-
+[config](../../AndroidProject/beibeihu/.git/config)
 ```bash
 cd src-tauri
 cargo test                          # Rust 单元测试
 cargo clippy --all-targets -- -D warnings   # Lint(必须通过)
 ```
-
+[config](../../AndroidProject/beibeihu/.git/config)
 ### 为当前平台打包
 
 ```bash

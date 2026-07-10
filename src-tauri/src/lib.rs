@@ -60,6 +60,7 @@ pub fn run() {
             commands::ssh_config::validate_ssh_config,
             commands::git::is_git_repo,
             commands::git::apply_identity_to_repo,
+            commands::git::write_repo_remote,
             commands::git::get_recent_commits,
             commands::git::get_repo_git_config,
             commands::git::get_global_git_config,

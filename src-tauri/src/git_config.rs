@@ -5,6 +5,34 @@ use crate::fs_safety;
 use crate::history::{self, FileChange};
 use crate::paths;
 
+
+
+/// Classify a git remote URL into the protocol family Git will use to
+/// actually talk to the remote.
+///
+/// Git itself resolves `git@host:path` and `ssh://...` over SSH,
+/// `https?://...` over HTTP(S) using `git-credential`, and `git://`
+/// over the legacy git:// protocol. Anything else (typo, custom scheme,
+/// empty string) is returned as `"unknown"`. The result is consumed by
+/// the audit dialog and by `apply_identity_to_repo` to decide whether
+/// writing an `[core] sshCommand` makes sense.
+///
+/// The classifier is pure and side-effect free — exported (and unit
+/// tested) so the audit dialog and the binding command agree on what
+/// "this remote is HTTPS" means.
+pub fn classify_remote_url(url: &str) -> &'static str {
+    let u = url.trim();
+    if u.starts_with("git@") || u.starts_with("ssh://") || u.starts_with("ssh+git://") {
+        "ssh"
+    } else if u.starts_with("https://") || u.starts_with("http://") {
+        "https"
+    } else if u.starts_with("git://") {
+        "git"
+    } else {
+        "unknown"
+    }
+}
+
 #[allow(dead_code)]
 pub fn has_include_if(gitdir: &str) -> Result<bool> {
     let path = paths::gitconfig_path()?;
@@ -173,6 +201,54 @@ pub fn write_identity_subfile(
     Ok(())
 }
 
+/// Write the per-identity sub-gitconfig for an **HTTPS-bound** identity.
+///
+/// SSH-bound identities still want a `sshCommand` line, so they go
+/// through `write_identity_subfile`. HTTPS-bound identities never
+/// touch SSH — `git push`/`fetch` go through `git-credential`. Writing
+/// `sshCommand` into `~/.gitconfig-<label>` would do nothing for the
+/// HTTPS project, and would actively corrupt any future SSH project
+/// that picks up the same label (the includeIf scope is per-directory,
+/// but `[core]` is last-wins, so a stray `sshCommand` from a sibling
+/// HTTPS project could leak into an SSH project in the same `gitdir`
+/// tree). The safest policy is: for HTTPS identities, persist *only*
+/// the `[user]` block and let the SSH-bound project (if any) write its
+/// own `[core] sshCommand` into its own `.git/config`.
+///
+/// `key_path` is accepted but ignored — kept in the signature so the
+/// caller does not have to branch on protocol at the call site.
+#[allow(dead_code)]
+pub fn write_identity_subfile_user_only(
+    label: &str,
+    user_name: &str,
+    user_email: &str,
+    _key_path: &str,
+) -> Result<()> {
+    let path = paths::gitconfig_for_identity_path(label)?;
+    let before = if path.exists() { fs::read_to_string(&path)? } else { String::new() };
+    let new_content = format!(
+        "[user]\n    name = {}\n    email = {}\n",
+        user_name, user_email
+    );
+    if before == new_content {
+        return Ok(());
+    }
+    history::commit_change(
+        "git_config_write_identity_user_only",
+        &format!("Wrote user-only per-identity gitconfig: {}", label),
+        std::iter::once((
+            path.to_string_lossy().to_string(),
+            FileChange { before: before.clone(), after: new_content.clone() },
+        ))
+        .collect(),
+    )?;
+    if let Some(parent) = path.parent() {
+        paths::ensure_dir(parent)?;
+    }
+    fs_safety::atomic_write(&path, &new_content, 0o644)?;
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -200,6 +276,65 @@ mod tests {
             assert!(raw.contains("email = a@co.com"));
             assert!(raw.contains("sshCommand = ssh -i ~/.ssh/id_work"));
         });
+    }
+
+    #[test]
+    fn test_write_identity_subfile_user_only_has_no_sshcommand() {
+        with_temp_home(|| {
+            // The whole point: even though we pass a key_path arg, the
+            // user-only subfile must not contain sshCommand.
+            write_identity_subfile_user_only(
+                "https_proj",
+                "Alice",
+                "a@co.com",
+                "~/.ssh/id_should_not_appear",
+            ).unwrap();
+            let p = paths::gitconfig_for_identity_path("https_proj").unwrap();
+            let raw = fs::read_to_string(&p).unwrap();
+            assert!(raw.contains("name = Alice"));
+            assert!(raw.contains("email = a@co.com"));
+            assert!(!raw.contains("sshCommand"), "user-only subfile must not carry sshCommand; got: {raw}");
+            assert!(!raw.contains("id_should_not_appear"), "key path must not be persisted for HTTPS identities; got: {raw}");
+        });
+    }
+
+    #[test]
+    fn test_write_identity_subfile_user_only_overwrites_legacy_ssh_command() {
+        with_temp_home(|| {
+            // Simulate an older nicessh build that wrote sshCommand
+            // for this label. A subsequent HTTPS binding must scrub
+            // it (otherwise the leaked sshCommand could shadow a
+            // sibling SSH project's [core]).
+            let p = paths::gitconfig_for_identity_path("shared").unwrap();
+            std::fs::create_dir_all(p.parent().unwrap()).unwrap();
+            std::fs::write(
+                &p,
+                "[user]\n    name = Old\n    email = o@x\n[core]\n    sshCommand = ssh -i ~/.ssh/old\n",
+            ).unwrap();
+            write_identity_subfile_user_only("shared", "New", "n@x", "~/.ssh/new").unwrap();
+            let raw = std::fs::read_to_string(&p).unwrap();
+            assert!(raw.contains("name = New"));
+            assert!(raw.contains("email = n@x"));
+            assert!(!raw.contains("sshCommand"), "legacy sshCommand must be scrubbed; got: {raw}");
+        });
+    }
+
+    #[test]
+    fn test_classify_remote_url() {
+        // SSH family
+        assert_eq!(super::classify_remote_url("git@github.com:user/repo.git"), "ssh");
+        assert_eq!(super::classify_remote_url("ssh://git@github.com/user/repo.git"), "ssh");
+        assert_eq!(super::classify_remote_url("ssh+git://git@github.com/user/repo.git"), "ssh");
+        // HTTPS family
+        assert_eq!(super::classify_remote_url("https://github.com/user/repo.git"), "https");
+        assert_eq!(super::classify_remote_url("http://git.company.local/repo.git"), "https");
+        // Legacy git://
+        assert_eq!(super::classify_remote_url("git://github.com/user/repo.git"), "git");
+        // Anything else
+        assert_eq!(super::classify_remote_url(""), "unknown");
+        assert_eq!(super::classify_remote_url("file:///tmp/repo"), "unknown");
+        // Whitespace tolerance
+        assert_eq!(super::classify_remote_url("  https://x/y.git  "), "https");
     }
 
     #[test]

@@ -81,7 +81,11 @@
       "userName": "user.name",
       "userEmail": "user.email",
       "sshKey": "sshKey",
-      "empty": "选择一个项目查看详情"
+      "empty": "选择一个项目查看详情",
+      "remote": "远程",
+      "remoteHttpsNote": "HTTPS 远程——SSH key 在此远程下不会生效。",
+      "remoteUnknownNote": "无法识别的远程地址——SSH key 是否生效未知。",
+      "remoteNone": "未配置远程地址。绑定身份时会提示输入。"
     },
     "action": {
       "switch": "切换身份",
@@ -90,7 +94,23 @@
     "empty": "暂无项目。添加一个仓库开始使用。",
     "setAsGlobalDefault": "设为全局默认",
     "setAsGlobalConfirm": "将 {{label}} 设为全局 Git 身份？这将影响所有未匹配 includeIf 规则的仓库。",
-    "setAsGlobalApplied": "已将全局默认设为 {{label}}（{{email}}）"
+    "setAsGlobalApplied": "已将全局默认设为 {{label}}（{{email}}）",
+    "remotePrompt": {
+      "title": "项目缺少远程地址",
+      "body": "在项目的 .git/config 里没找到远程地址，因此 NiceSSH 无法判断应该按 SSH 还是 HTTPS 来绑定身份。请填入远程地址：",
+      "urlLabel": "远程地址（例如 git@github.com:user/repo.git 或 https://github.com/user/repo.git）",
+      "protocolLabel": "协议",
+      "save": "保存并应用",
+      "cancel": "取消",
+      "saved": "远程地址已保存",
+      "invalidUrl": "该地址无法识别（应为 git@、ssh://、https://、http:// 或 git:// 形式）。",
+      "needsRemote": "项目还没有远程地址。请先填入，再绑定身份。"
+    },
+    "outcome": {
+      "ssh-style": "已绑定身份（SSH 模式）",
+      "user-only": "已绑定身份（仅 user，HTTPS 远程）",
+      "needs-remote": "需要先填入远程地址才能绑定"
+    }
   },
   "identities": {
     "title": "身份",
@@ -360,6 +380,26 @@
     "status.clean": "干净",
     "status.dirty": "脏（多个 sshCommand 块）",
     "status.no-config": "无 .git/config",
-    "status.no-identity": "未绑定身份"
+    "status.no-identity": "未绑定身份",
+    "protocol": "协议",
+    "protocol.ssh": "SSH",
+    "protocol.https": "HTTPS",
+    "protocol.git": "Git",
+    "protocol.unknown": "未知",
+    "protocol.none": "无远程",
+    "httpsKeyIgnored.title": "SSH key 在此远程下不会生效",
+    "httpsKeyIgnored.body": "此项目的 origin 是 HTTPS，git push/pull 会走 git-credential（HTTPS 用账号+密码/令牌），NiceSSH 写入的 sshCommand 会被忽略。要让这把 SSH key 生效：(1) 在代码托管平台（GitHub / GitLab / Gitee 等）添加对应的 SSH 公钥；(2) 在终端执行 git remote set-url origin git@...:user/repo.git；(3) 回到 NiceSSH 重新绑定身份。"
+  },
+  "httpsBindConfirm": {
+    "title": "SSH key 在此远程下不会生效",
+    "heading": "{{project}} 使用 {{protocol}} 远程。",
+    "thisProject": "该项目",
+    "body1": "NiceSSH 将只替换 [user] 块（user.name、user.email）。[core] sshCommand 在此远程下**不会被使用**——本远程使用账号+密码（或令牌）认证，而不是 SSH。",
+    "body2": "如果你希望这把 SSH key 生效：\n1) 在代码托管平台添加对应的 SSH 公钥；\n2) 把本项目的远程地址切换为 SSH 形式；\n3) 然后回到 NiceSSH 重新绑定身份。",
+    "continue": "继续（只切换 user/email）",
+    "changeRemote": "切换远程地址到 SSH…",
+    "cancel": "取消",
+    "sshUrlPrefilled": "已预填 SSH 远程地址：{{url}}",
+    "switchedRemote": "远程地址已保存。正在重新绑定身份…"
   }
 }

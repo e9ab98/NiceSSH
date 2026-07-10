@@ -52,7 +52,21 @@ opt_release() {
   # Pre-flight checks
   require_jq || return 1
   require_main_branch || return 1
-  require_clean_tree || return 1
+
+  # If the working tree is dirty, auto-commit those changes before computing
+  # the next version (otherwise commit_count would not yet reflect them, and
+  # the trailing release commit would land on top with the wrong patch number).
+  if [ -n "$(git status --porcelain)" ]; then
+    echo "── Working tree dirty — auto-committing pending changes ──"
+    git status --short
+    git add -A
+    if git diff --cached --quiet; then
+      echo "::error::git add -A staged nothing; aborting." >&2
+      return 1
+    fi
+    git commit -m "chore: snapshot working tree before release"
+    echo ""
+  fi
 
   git fetch --tags --force >/dev/null
 
