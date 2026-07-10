@@ -83,7 +83,6 @@
       "sshKey": "sshKey",
       "empty": "选择一个项目查看详情",
       "remote": "远程",
-      "remoteHttpsNote": "HTTPS 远程——SSH key 在此远程下不会生效。",
       "remoteUnknownNote": "无法识别的远程地址——SSH key 是否生效未知。",
       "remoteNone": "未配置远程地址。绑定身份时会提示输入。"
     },

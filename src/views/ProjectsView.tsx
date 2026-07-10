@@ -621,11 +621,6 @@ function ProjectDetail({ project, detected, hasIdentities, repoConfig, onSwitch,
                 <ProtocolBadge protocol={repoConfig.remoteProtocol} t={t} />
                 <span className="text-xs font-mono text-text-1 truncate flex-1 min-w-0">{repoConfig.remoteUrl}</span>
               </div>
-              {repoConfig.remoteProtocol === 'https' && (
-                <p className="text-xs text-warning mt-0.5">
-                  {t('projects.detail.remoteHttpsNote')}
-                </p>
-              )}
               {repoConfig.remoteProtocol === 'unknown' && (
                 <p className="text-xs text-warning mt-0.5">
                   {t('projects.detail.remoteUnknownNote')}

@@ -83,7 +83,6 @@
       "sshKey": "sshKey",
       "empty": "Select a project to view details",
       "remote": "Remote",
-      "remoteHttpsNote": "HTTPS — SSH key will not apply on this remote.",
       "remoteUnknownNote": "Unrecognised URL — NiceSSH could not classify it. SSH key may or may not apply.",
       "remoteNone": "No remote configured. Bind action will ask for one."
     },
