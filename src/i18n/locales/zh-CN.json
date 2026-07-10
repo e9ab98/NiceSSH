@@ -297,6 +297,7 @@
       "changelog": "更新日志",
       "loadingChangelog": "正在加载更新日志...",
       "changelogLoadFailed": "加载更新日志失败",
+      "changelogEmpty": "暂无更新日志内容",
       "viewLatestChangelog": "查看新版本更新日志",
       "viewCurrentChangelog": "查看当前版本更新日志"
     },

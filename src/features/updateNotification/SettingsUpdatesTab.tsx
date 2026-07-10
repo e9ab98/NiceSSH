@@ -268,7 +268,7 @@ export function SettingsUpdatesTab() {
 
         {!loadingLog && !logError && !parsedHtml && !changelog && (
           <div className="text-text-2 text-xs py-6 text-center">
-            暂无日志内容
+            {t('settings.updates.changelogEmpty')}
           </div>
         )}
       </Card>

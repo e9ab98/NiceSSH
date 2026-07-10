@@ -297,6 +297,7 @@
       "changelog": "Release Notes",
       "loadingChangelog": "Loading release notes...",
       "changelogLoadFailed": "Failed to load release notes.",
+      "changelogEmpty": "No release notes yet.",
       "viewLatestChangelog": "View New Version Changelog",
       "viewCurrentChangelog": "View Current Version Changelog"
     },

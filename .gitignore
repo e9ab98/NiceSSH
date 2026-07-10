@@ -20,6 +20,10 @@ docs/
 !docs/superpowers/specs/
 !docs/superpowers/specs/**
 
+# Daily review output is tracked (intentional whitelist)
+!docs/superpowers/daily/
+!docs/superpowers/daily/**
+
 # OS noise
 .DS_Store
 Thumbs.db
@@ -37,3 +41,10 @@ Thumbs.db
 .npmrc
 logo_square.png
 __pycache__/
+
+# Daily-review automation runtime config (path is machine-local)
+scripts/.daily-review.env
+/scripts/install-daily-review-launchd.sh
+/scripts/README.daily-review.md
+/scripts/uninstall-daily-review-launchd.sh
+/scripts/run-daily-review.sh
