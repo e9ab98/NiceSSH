@@ -205,22 +205,6 @@ export function SettingsView() {
               </pre>
             )}
           </Card>
-          <Card className="p-4">
-            <div className="flex items-center justify-between">
-              <span>{t('settings.logs.clearTitle')}</span>
-              <Button
-                variant="danger"
-                onClick={async () => {
-                  if (confirm(t('settings.logs.clearConfirm'))) {
-                    await clearHistory();
-                    toast.success(t('settings.logs.cleared'));
-                  }
-                }}
-              >
-                {t('settings.logs.clearButton')}
-              </Button>
-            </div>
-          </Card>
         </TabsContent>
 
         <TabsContent value="env" className="space-y-2">
@@ -232,6 +216,22 @@ export function SettingsView() {
               <div><kbd className="font-mono text-xs px-1.5 py-0.5 rounded border border-border bg-bg-0">{modKey}</kbd> + 3 — {t('settings.shortcuts.sshConfig')}</div>
               <div><kbd className="font-mono text-xs px-1.5 py-0.5 rounded border border-border bg-bg-0">{modKey}</kbd> + 4 — {t('settings.shortcuts.history')}</div>
               <div><kbd className="font-mono text-xs px-1.5 py-0.5 rounded border border-border bg-bg-0">{modKey}</kbd> + , — {t('settings.shortcuts.settings')}</div>
+            </div>
+          </Card>
+          <Card className="p-4">
+            <div className="flex items-center justify-between">
+              <span>{t('history.clearTitle')}</span>
+              <Button
+                variant="danger"
+                onClick={async () => {
+                  if (confirm(t('history.clearConfirm'))) {
+                    await clearHistory();
+                    toast.success(t('history.cleared'));
+                  }
+                }}
+              >
+                {t('history.clearButton')}
+              </Button>
             </div>
           </Card>
           {env.map((e) => (

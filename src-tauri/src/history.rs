@@ -157,16 +157,19 @@ pub fn clear_all() -> Result<()> {
     if !dir.exists() {
         return Ok(());
     }
+    // Write the empty index first, so a crash between the index write and the
+    // snapshot deletes still leaves a consistent (empty) view on next startup.
+    // Orphan snapshot files are harmless: `enforce_retention` only acts on
+    // entries present in the index.
+    let index_path = dir.join("index.json");
+    crate::fs_safety::atomic_write(&index_path, "[]", 0o644)?;
     for entry in fs::read_dir(&dir)? {
         let entry = entry?;
         let path = entry.path();
-        if path.is_file() {
+        if path.is_file() && path != index_path {
             let _ = fs::remove_file(&path);
         }
     }
-    let json = "[]";
-    let path = dir.join("index.json");
-    crate::fs_safety::atomic_write(&path, json, 0o644)?;
     Ok(())
 }
 

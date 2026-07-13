@@ -243,7 +243,21 @@
     "revert": "Revert",
     "rollbackConfirm": "Rollback to this state? Current state will be saved first.",
     "rolledBack": "Rolled back",
-    "empty": "No history yet"
+    "empty": "No history yet",
+    "noMatches": "No history matches your filter",
+    "searchPlaceholder": "Search summary or file path…",
+    "filterAll": "All",
+    "filterApply": "Apply",
+    "filterClean": "Clean",
+    "filterRepo": "Repo",
+    "filterSshConfig": "SSH Config",
+    "filterSettings": "Settings",
+    "count": "{{count}} entries",
+    "filteredCount": "{{shown}} of {{total}} entries",
+    "clearTitle": "Clear all modification history (irreversible)",
+    "clearButton": "Clear History",
+    "clearConfirm": "Clear all history? This cannot be undone.",
+    "cleared": "History cleared"
   },
   "settings": {
     "title": "Settings",
@@ -267,10 +281,6 @@
       "chinese": "简体中文"
     },
     "logs": {
-      "clearTitle": "Clear all modification history (irreversible)",
-      "clearButton": "Clear History",
-      "clearConfirm": "Clear all history? This cannot be undone.",
-      "cleared": "History cleared",
       "viewerTitle": "Application log",
       "refresh": "Refresh",
       "autoRefresh": "Auto refresh (3s)",
