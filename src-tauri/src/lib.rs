@@ -3,6 +3,7 @@
 pub mod commands;
 pub mod config_store;
 pub mod scanner;
+pub mod git;
 
 #[cfg(test)]
 mod test_helpers;
