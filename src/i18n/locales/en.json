@@ -84,7 +84,9 @@
       "empty": "Select a project to view details",
       "remote": "Remote",
       "remoteUnknownNote": "Unrecognised URL — NiceSSH could not classify it. SSH key may or may not apply.",
-      "remoteNone": "No remote configured. Bind action will ask for one."
+      "remoteNone": "No remote configured. Bind action will ask for one.",
+      "notARepoTitle": "Not a git repository",
+      "notARepoBody": "Pick an identity and NiceSSH will run git init here and create the initial commit."
     },
     "action": {
       "switch": "Switch identity",
@@ -109,7 +111,10 @@
       "ssh-style": "Identity applied (SSH)",
       "user-only": "Identity applied (user only — HTTPS remote)",
       "needs-remote": "A remote URL is required before binding"
-    }
+    },
+    "initProject": "Initialize project",
+    "initSuccess": "Project initialized",
+    "initNoIdentity": "Please create an identity in the Identity tab first"
   },
   "identities": {
     "title": "Identities",

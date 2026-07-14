@@ -9,7 +9,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../com
 import { useProjectsStore } from '../store/projects';
 import { useIdentitiesStore } from '../store/identities';
 import { useSettingsStore } from '../store/settings';
-import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, getGlobalGitConfig, isGitRepo, setGlobalGitConfig, type RepoGitConfig, type GlobalGitConfig } from '../ipc/git';
+import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, getGlobalGitConfig, initRepo, isGitRepo, setGlobalGitConfig, type RepoGitConfig, type GlobalGitConfig } from '../ipc/git';
 import { tryUnlockKey, isKeyEncrypted } from '../ipc/sshAdd';
 import { IdentitySwitcherDialog } from '../features/identitySwitcher/IdentitySwitcherDialog';
 import { RepoAuditDialog } from '../features/repoAudit/RepoAuditDialog';
@@ -112,6 +112,24 @@ export function ProjectsView() {
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; projectId: string; projectName: string } | null>(null);
   const [adding, setAdding] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
+  // Per-project isGitRepo() result. Drives the 'Not initialized' badge
+  // and the Initialize Project button. Refreshed whenever the projects
+  // list changes or after a successful init_repo call.
+  const [isRepoMap, setIsRepoMap] = useState<Record<string, boolean>>({});
+  // When set, points at a project that the user wants to initialize.
+  // The IdentitySwitcherDialog reuses its `switcherOpen` state to ask
+  // for an identity; `initTargetId` carries the project context so we
+  // know what to do with the chosen identity.
+  const [initTargetId, setInitTargetId] = useState<string | null>(null);
+  const [initializing, setInitializing] = useState(false);
+  const refreshIsRepo = useCallback(async () => {
+    const out: Record<string, boolean> = {};
+    for (const p of projects) {
+      try { out[p.id] = await isGitRepo(p.path); } catch { out[p.id] = false; }
+    }
+    setIsRepoMap(out);
+  }, [projects]);
+
   const refreshRepoConfigs = useCallback(async () => {
     const out: Record<string, RepoGitConfig> = {};
     for (const p of projects) {
@@ -123,6 +141,11 @@ export function ProjectsView() {
     }
     setRepoConfigs(out);
   }, [projects]);
+
+  // Keep the isRepo map in sync with the projects list. We do this in
+  // a separate effect (rather than inside refreshRepoConfigs) so that
+  // the dependency arrays of useCallbacks above stay accurate.
+  useEffect(() => { void refreshIsRepo(); }, [refreshIsRepo]);
 
   useEffect(() => { refreshProjects(); refreshIdentities(); }, []);
 
@@ -288,10 +311,6 @@ export function ProjectsView() {
     try {
       const picked = await openDirDialog({ directory: true, multiple: false });
       if (typeof picked !== 'string') return;
-      if (!(await isGitRepo(picked))) {
-        toast.error(t('addProject.notGitRepo'));
-        return;
-      }
       const project = await add({ name: deriveName(picked), path: picked, identityId: defaultIdentityId });
       if (defaultIdentityId) {
         await bindIdentity(project.id, defaultIdentityId, project.path);
@@ -303,6 +322,48 @@ export function ProjectsView() {
       toast.error(String(e));
     } finally {
       setAdding(false);
+    }
+  };
+
+  /// Open the identity switcher for a project that is not yet a git
+  /// repository. The user picks an identity, we (a) call init_repo on
+  /// the project path, (b) refresh isRepo + repoConfig so the UI
+  /// shows the freshly-created repo, and (c) chain into the regular
+  /// bindIdentity flow so the SSH key is wired up to .git/config.
+  const handleInit = async (projectId: string) => {
+    const proj = projects.find((p) => p.id === projectId);
+    if (!proj || initializing) return;
+    setInitTargetId(projectId);
+    setSwitcherOpen(true);
+  };
+
+  /// Called by the IdentitySwitcherDialog when the user picks an
+  /// identity while a project is being initialized. Performs:
+  ///   init_repo(path, identityId) -> bindIdentity(project, identityId)
+  /// `bindIdentity` already handles HTTPS warnings and needs-remote
+  /// retry dialogs, so we just feed it the chosen identity and let
+  /// the existing dialog chain play out.
+  const handleInitSelect = async (identityId: string) => {
+    if (!initTargetId) return;
+    const proj = projects.find((p) => p.id === initTargetId);
+    if (!proj) {
+      setInitTargetId(null);
+      return;
+    }
+    setInitializing(true);
+    try {
+      await initRepo(proj.path, identityId);
+      toast.success(t('projects.initSuccess'));
+      // Refresh the isRepo flag so the badge and the button update.
+      await refreshIsRepo();
+      // Chain into the regular bind flow so the SSH key lands in
+      // .git/config (and any HTTPS/needs-remote dialogs surface).
+      await bindIdentity(initTargetId, identityId, proj.path);
+      setInitTargetId(null);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setInitializing(false);
     }
   };
 
@@ -477,6 +538,9 @@ export function ProjectsView() {
                 detected={detected}
                 hasIdentities={identities.length > 0}
                 repoConfig={repoConfig}
+                isRepo={isRepoMap[selected.id]}
+                initializing={initializing}
+                onInit={() => { void handleInit(selected.id); }}
                 onSwitch={() => setSwitcherOpen(true)}
                 onTest={() => setTesterOpen(true)}
                 onRemove={() => { void handleRemove(selected.id); }}
@@ -493,11 +557,17 @@ export function ProjectsView() {
 
         <IdentitySwitcherDialog
           open={switcherOpen}
-          onOpenChange={setSwitcherOpen}
+          onOpenChange={(v) => {
+            setSwitcherOpen(v);
+            // When the user cancels out of the init flow, drop the
+            // target so a later 'switch identity' click does not
+            // accidentally re-run init_repo.
+            if (!v) setInitTargetId(null);
+          }}
           identities={identities}
-          currentId={selected?.identityId ?? null}
+          currentId={initTargetId ? null : (selected?.identityId ?? null)}
           projectPath={selected?.path ?? null}
-          onSelect={handleSelect}
+          onSelect={initTargetId ? handleInitSelect : handleSelect}
         />
         <RepoAuditDialog
           open={auditOpen}
@@ -583,11 +653,18 @@ export function ProjectsView() {
   );
 }
 
-function ProjectDetail({ project, detected, hasIdentities, repoConfig, onSwitch, onTest, onRemove, onSetAsGlobal }: {
+function ProjectDetail({ project, detected, hasIdentities, repoConfig, isRepo, initializing, onInit, onSwitch, onTest, onRemove, onSetAsGlobal }: {
   project: { id: string; name: string; path: string };
   detected: DetectedIdentity;
   hasIdentities: boolean;
   repoConfig: RepoGitConfig | null;
+  /// Result of isGitRepo() for this project. `undefined` means the
+  /// check is still in flight (project was just added and the IPC
+  /// has not returned yet). `false` triggers the 'Not initialized'
+  /// call-to-action below the header.
+  isRepo?: boolean;
+  initializing?: boolean;
+  onInit: () => void;
   onSwitch: () => void;
   onTest: () => void;
   onRemove: () => void;
@@ -610,6 +687,29 @@ function ProjectDetail({ project, detected, hasIdentities, repoConfig, onSwitch,
         <h1 className="text-xl font-extrabold text-text-0">{project.name}</h1>
         <p className="text-xs text-text-2 font-mono truncate mt-0.5">{project.path}</p>
       </div>
+
+      {/* Not-a-git-repo call-to-action. Shown when isGitRepo() has
+          resolved to false for this project. Skipped while the check
+          is still pending (isRepo === undefined) so we do not flash
+          the warning during the initial load. */}
+      {isRepo === false && (
+        <div className="rounded-xl border border-warning/40 bg-[rgba(245,158,11,0.08)] p-3 flex items-center gap-3">
+          <AlertTriangle className="h-5 w-5 text-warning shrink-0 [[data-theme=dark]_&]:text-[#fcd34d]" />
+          <div className="flex-1 min-w-0">
+            <div className="text-sm font-semibold text-text-0">{t('projects.detail.notARepoTitle')}</div>
+            <div className="text-xs text-text-1 mt-0.5">{t('projects.detail.notARepoBody')}</div>
+          </div>
+          <Button
+            variant="default"
+            size="sm"
+            disabled={initializing || !hasIdentities}
+            onClick={onInit}
+            className="shrink-0"
+          >
+            {t('projects.initProject')}
+          </Button>
+        </div>
+      )}
 
       {/* Remote */}
       <div>

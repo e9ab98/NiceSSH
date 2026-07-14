@@ -1,6 +1,12 @@
 import { ipc } from './client';
 
 export const isGitRepo = (path: string) => ipc<boolean>('is_git_repo', { path });
+/// Initialize a non-git directory as a git repository and commit a
+/// minimal initial revision attributed to the chosen identity.
+/// Returns void on success; throws on validation/git failures.
+/// See Rust `commands/git.rs::init_repo` for the exact step list.
+export const initRepo = (path: string, identityId: string) =>
+  ipc<void>('init_repo', { path, identityId });
 export type BindOutcome = 'ssh-style' | 'user-only' | 'needs-remote';
 
 export const applyIdentityToRepo = (projectId: string, identityId: string) =>

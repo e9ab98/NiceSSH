@@ -84,7 +84,9 @@
       "empty": "选择一个项目查看详情",
       "remote": "远程",
       "remoteUnknownNote": "无法识别的远程地址——SSH key 是否生效未知。",
-      "remoteNone": "未配置远程地址。绑定身份时会提示输入。"
+      "remoteNone": "未配置远程地址。绑定身份时会提示输入。",
+      "notARepoTitle": "此目录不是 git 仓库",
+      "notARepoBody": "选择一个身份后，NiceSSH 会在此目录运行 git init 并创建初始提交。"
     },
     "action": {
       "switch": "切换身份",
@@ -109,7 +111,10 @@
       "ssh-style": "已绑定身份（SSH 模式）",
       "user-only": "已绑定身份（仅 user，HTTPS 远程）",
       "needs-remote": "需要先填入远程地址才能绑定"
-    }
+    },
+    "initProject": "初始化项目",
+    "initSuccess": "项目已初始化",
+    "initNoIdentity": "请先在身份管理中创建一个身份"
   },
   "identities": {
     "title": "身份",
