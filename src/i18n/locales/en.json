@@ -33,7 +33,10 @@
     "unlocking": "Unlocking…",
     "generate": "Generate",
     "generating": "Generating…",
-    "refresh": "Refresh"
+    "refresh": "Refresh",
+    "committing": "Committing…",
+    "pulling": "Pulling…",
+    "pushing": "Pushing…"
   },
   "projects": {
     "title": "Projects",
@@ -416,5 +419,50 @@
     "cancel": "Cancel",
     "sshUrlPrefilled": "Pre-filled SSH URL: {{url}}",
     "switchedRemote": "Remote URL saved. Re-applying identity…"
+  },
+  "gitOps": {
+    "quickActions": "Repository",
+    "fetch": "Fetch",
+    "fetchSuccess": "Fetched remote updates",
+    "pull": {
+      "title": "Pull",
+      "subtitle": "Pull updates from {{name}}’s remote",
+      "rebase": "Rebase instead of merge",
+      "rebaseHint": "Rebase replays your local commits on top of the remote; no merge commit is created.",
+      "submit": "Pull",
+      "success": "{{name}} pulled successfully",
+      "label": "Pull"
+    },
+    "commit": {
+      "title": "Commit",
+      "subtitle": "Create a new commit in {{name}}",
+      "message": "Commit message",
+      "messagePlaceholder": "Describe your change...",
+      "addAll": "Auto-stage all changes (git add .)",
+      "submit": "Commit",
+      "success": "Committed {{hash}}",
+      "nothingToCommit": "Nothing to commit",
+      "label": "Commit",
+      "needIdentity": "Bind an identity first (set user.name / user.email)"
+    },
+    "push": {
+      "title": "Push",
+      "subtitle": "Push {{name}}’s local commits to the remote",
+      "showAdvanced": "Advanced",
+      "hideAdvanced": "Hide advanced",
+      "force": "Force push (--force-with-lease)",
+      "forceHint": "Overwrite the remote history. Git will refuse if the remote has commits you have not seen.",
+      "submit": "Push",
+      "submitForce": "Force push",
+      "success": "{{name}} pushed successfully",
+      "label": "Push"
+    },
+    "status": {
+      "uncommitted": "{{count}} uncommitted change(s)",
+      "clean": "Working tree clean",
+      "ahead": "{{count}} commit(s) ahead",
+      "behind": "{{count}} commit(s) behind",
+      "noRemote": "No remote configured"
+    }
   }
 }

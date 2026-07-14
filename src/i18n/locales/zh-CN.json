@@ -33,7 +33,10 @@
     "unlocking": "解锁中…",
     "generate": "生成",
     "generating": "生成中…",
-    "refresh": "刷新"
+    "refresh": "刷新",
+    "committing": "提交中…",
+    "pulling": "拉取中…",
+    "pushing": "推送中…"
   },
   "projects": {
     "title": "项目",
@@ -416,5 +419,50 @@
     "cancel": "取消",
     "sshUrlPrefilled": "已预填 SSH 远程地址：{{url}}",
     "switchedRemote": "远程地址已保存。正在重新绑定身份…"
+  },
+  "gitOps": {
+    "quickActions": "仓库操作",
+    "fetch": "Fetch",
+    "fetchSuccess": "已获取远端更新",
+    "pull": {
+      "title": "Pull",
+      "subtitle": "从 {{name}} 的远端拉取更新",
+      "rebase": "使用 rebase 合并",
+      "rebaseHint": "rebase 会把你的本地提交重放到远端之后，不产生 merge commit。",
+      "submit": "拉取",
+      "success": "{{name}} 拉取成功",
+      "label": "拉取"
+    },
+    "commit": {
+      "title": "提交",
+      "subtitle": "为 {{name}} 创建一个新提交",
+      "message": "提交信息",
+      "messagePlaceholder": "描述这次改动...",
+      "addAll": "自动 stage 所有改动（git add .）",
+      "submit": "提交",
+      "success": "已提交 {{hash}}",
+      "nothingToCommit": "没有需要提交的改动",
+      "label": "提交",
+      "needIdentity": "请先在仓库中绑定身份（设置 user.name / user.email）"
+    },
+    "push": {
+      "title": "Push",
+      "subtitle": "将 {{name}} 的本地提交推送到远端",
+      "showAdvanced": "高级选项",
+      "hideAdvanced": "隐藏高级选项",
+      "force": "强制推送 (--force-with-lease)",
+      "forceHint": "覆盖远端历史。如果远端有你没看到的提交，git 会拒绝。",
+      "submit": "推送",
+      "submitForce": "强制推送",
+      "success": "{{name}} 推送成功",
+      "label": "推送"
+    },
+    "status": {
+      "uncommitted": "{{count}} 处未提交改动",
+      "clean": "工作区干净",
+      "ahead": "领先 {{count}} 个提交",
+      "behind": "落后 {{count}} 个提交",
+      "noRemote": "未配置远端"
+    }
   }
 }

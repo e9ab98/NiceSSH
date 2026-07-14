@@ -1,4 +1,4 @@
-import { ipc } from './client';
+import { ipc, type IpcOptions } from './client';
 
 export const isGitRepo = (path: string) => ipc<boolean>('is_git_repo', { path });
 /// Initialize a non-git directory as a git repository and commit a
@@ -7,6 +7,35 @@ export const isGitRepo = (path: string) => ipc<boolean>('is_git_repo', { path })
 /// See Rust `commands/git.rs::init_repo` for the exact step list.
 export const initRepo = (path: string, identityId: string) =>
   ipc<void>('init_repo', { path, identityId });
+
+// --- Quick Actions row (status / commit / push / pull / fetch) ---
+// See Rust `commands/git.rs` for the exact step list and error
+// surfaces. The Tauri command names use snake_case (`git_status`,
+// `git_commit`, ...) to avoid colliding with the JS-side `status`
+// / `commit` identifiers that are also used as the IPC *channel*
+// names in some transports.
+
+export interface RepoStatus {
+  porcelain: string;
+  ahead: number | null;
+  behind: number | null;
+  hasUpstream: boolean;
+}
+
+export const gitStatus = (path: string) =>
+  ipc<RepoStatus>('git_status', { path });
+
+export const gitCommit = (path: string, message: string, addAll: boolean, options?: IpcOptions) =>
+  ipc<string>('git_commit', { path, message, addAll }, options);
+
+export const gitPush = (path: string, force: boolean) =>
+  ipc<string>('git_push', { path, force });
+
+export const gitPull = (path: string, rebase: boolean) =>
+  ipc<string>('git_pull', { path, rebase });
+
+export const gitFetch = (path: string) =>
+  ipc<string>('git_fetch', { path });
 export type BindOutcome = 'ssh-style' | 'user-only' | 'needs-remote';
 
 export const applyIdentityToRepo = (projectId: string, identityId: string) =>

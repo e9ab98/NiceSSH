@@ -9,13 +9,16 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../com
 import { useProjectsStore } from '../store/projects';
 import { useIdentitiesStore } from '../store/identities';
 import { useSettingsStore } from '../store/settings';
-import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, getGlobalGitConfig, initRepo, isGitRepo, setGlobalGitConfig, type RepoGitConfig, type GlobalGitConfig } from '../ipc/git';
+import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, getGlobalGitConfig, gitStatus, initRepo, isGitRepo, setGlobalGitConfig, type RepoGitConfig, type GlobalGitConfig, type RepoStatus } from '../ipc/git';
 import { tryUnlockKey, isKeyEncrypted } from '../ipc/sshAdd';
 import { IdentitySwitcherDialog } from '../features/identitySwitcher/IdentitySwitcherDialog';
 import { RepoAuditDialog } from '../features/repoAudit/RepoAuditDialog';
 import { PassphraseDialog } from '../features/passphraseDialog/PassphraseDialog';
 import { RemoteUrlPromptDialog } from '../features/remotePrompt/RemoteUrlPromptDialog';
 import { HttpsBindConfirmDialog, type HttpsBindChoice } from '../features/httpsBindConfirm/HttpsBindConfirmDialog';
+import { CommitDialog } from '../features/gitOps/CommitDialog';
+import { PullDialog } from '../features/gitOps/PullDialog';
+import { PushDialog } from '../features/gitOps/PushDialog';
 import { ConnectionTesterDialog } from '../features/connectionTester/ConnectionTesterDialog';
 import { ContextMenu } from '../components/ContextMenu';
 import { toast } from 'sonner';
@@ -122,6 +125,21 @@ export function ProjectsView() {
   // know what to do with the chosen identity.
   const [initTargetId, setInitTargetId] = useState<string | null>(null);
   const [initializing, setInitializing] = useState(false);
+  // Quick Actions dialogs. We open them via dedicated state so the
+  // dialogs know which project they target (the selected one) and
+  // can call back to refresh the status row on success.
+  const [commitOpen, setCommitOpen] = useState(false);
+  const [pullOpen, setPullOpen] = useState(false);
+  const [pushOpen, setPushOpen] = useState(false);
+  // Last known status snapshot for the *selected* project. Refreshed
+  // on selection change and after every successful git op. Drives
+  // the ahead/behind/working-tree-dirty line under the Quick
+  // Actions row.
+  const [statusForSelected, setStatusForSelected] = useState<RepoStatus | null>(null);
+  // Recent commits for the selected project, mirrored from
+  // ProjectDetail's local state so dialog success callbacks can
+  // trigger a refresh without a prop-drilling rabbit hole.
+  const [commitsForSelected, setCommitsForSelected] = useState<{ hash: string; subject: string }[]>([]);
   const refreshIsRepo = useCallback(async () => {
     const out: Record<string, boolean> = {};
     for (const p of projects) {
@@ -147,6 +165,7 @@ export function ProjectsView() {
   // the dependency arrays of useCallbacks above stay accurate.
   useEffect(() => { void refreshIsRepo(); }, [refreshIsRepo]);
 
+
   useEffect(() => { refreshProjects(); refreshIdentities(); }, []);
 
   useEffect(() => {
@@ -170,6 +189,23 @@ export function ProjectsView() {
   }, [projects]);
 
   const selected = projects.find((p) => p.id === selectedId) ?? null;
+  // Refresh the Quick Actions status row for the *selected*
+  // project. We deliberately do not refresh on every project
+  // change — git status is cheap, but porcelain parsing is
+  // still O(files), and the left list view does not need
+  // per-row status yet.
+  const refreshStatus = useCallback(async () => {
+    if (!selected) { setStatusForSelected(null); return; }
+    if (isRepoMap[selected.id] === false) { setStatusForSelected(null); return; }
+    try {
+      const s = await gitStatus(selected.path);
+      setStatusForSelected(s);
+    } catch {
+      setStatusForSelected(null);
+    }
+  }, [selected, isRepoMap]);
+  useEffect(() => { void refreshStatus(); }, [refreshStatus]);
+
   const repoConfig = selected ? (repoConfigs[selected.id] ?? null) : null;
   const detected = selected ? detectIdentity(selected, identities, repoConfig) : { kind: 'none' as const };
   const identity = detected.kind === 'tracked' ? detected.identity : null;
@@ -540,6 +576,13 @@ export function ProjectsView() {
                 repoConfig={repoConfig}
                 isRepo={isRepoMap[selected.id]}
                 initializing={initializing}
+                commits={commitsForSelected}
+                setCommits={setCommitsForSelected}
+                status={statusForSelected}
+                opsBusy={false}
+                onCommit={() => setCommitOpen(true)}
+                onPull={() => setPullOpen(true)}
+                onPush={() => setPushOpen(true)}
                 onInit={() => { void handleInit(selected.id); }}
                 onSwitch={() => setSwitcherOpen(true)}
                 onTest={() => setTesterOpen(true)}
@@ -569,6 +612,39 @@ export function ProjectsView() {
           projectPath={selected?.path ?? null}
           onSelect={initTargetId ? handleInitSelect : handleSelect}
         />
+        {selected && (
+          <CommitDialog
+            open={commitOpen}
+            onOpenChange={setCommitOpen}
+            projectPath={selected.path}
+            projectName={selected.name}
+            onCommitted={async () => {
+              await refreshStatus();
+              try {
+                const list = await getRecentCommits(selected.path, 10);
+                setCommitsForSelected(list);
+              } catch { /* ignore */ }
+            }}
+          />
+        )}
+        {selected && (
+          <PullDialog
+            open={pullOpen}
+            onOpenChange={setPullOpen}
+            projectPath={selected.path}
+            projectName={selected.name}
+            onPulled={refreshStatus}
+          />
+        )}
+        {selected && (
+          <PushDialog
+            open={pushOpen}
+            onOpenChange={setPushOpen}
+            projectPath={selected.path}
+            projectName={selected.name}
+            onPushed={refreshStatus}
+          />
+        )}
         <RepoAuditDialog
           open={auditOpen}
           onOpenChange={setAuditOpen}
@@ -653,7 +729,7 @@ export function ProjectsView() {
   );
 }
 
-function ProjectDetail({ project, detected, hasIdentities, repoConfig, isRepo, initializing, onInit, onSwitch, onTest, onRemove, onSetAsGlobal }: {
+function ProjectDetail({ project, detected, hasIdentities, repoConfig, isRepo, initializing, status, opsBusy, onInit, onCommit, onPull, onPush, onSwitch, onTest, onRemove, onSetAsGlobal, commits, setCommits }: {
   project: { id: string; name: string; path: string };
   detected: DetectedIdentity;
   hasIdentities: boolean;
@@ -664,21 +740,56 @@ function ProjectDetail({ project, detected, hasIdentities, repoConfig, isRepo, i
   /// call-to-action below the header.
   isRepo?: boolean;
   initializing?: boolean;
+  /// Latest status snapshot for the Quick Actions row. `null` while
+  /// loading or when the project is not a git repository.
+  status: RepoStatus | null;
+  /// Single shared "a git op is in flight" flag, used to disable
+  /// the 4 Quick Actions buttons.
+  opsBusy: boolean;
   onInit: () => void;
+  onCommit: () => void;
+  onPull: () => void;
+  onPush: () => void;
   onSwitch: () => void;
   onTest: () => void;
   onRemove: () => void;
   onSetAsGlobal: () => void;
+  /// Recent commits for this project. Lifted to the parent so the
+  /// CommitDialog success callback can refresh it.
+  commits: { hash: string; subject: string }[];
+  setCommits: (list: { hash: string; subject: string }[]) => void;
 }) {
   const { t } = useTranslation();
-  const [commits, setCommits] = useState<{ hash: string; subject: string }[]>([]);
+  // Commits are now lifted to the parent (so the CommitDialog can
+  // refresh them on success). The local effect still owns the
+  // initial fetch — the parent re-fetches on commit success.
   useEffect(() => {
-    getRecentCommits(project.path, 10).then(setCommits).catch(() => setCommits([]));
+    let cancelled = false;
+    getRecentCommits(project.path, 10)
+      .then((list) => { if (!cancelled) setCommits(list); })
+      .catch(() => { if (!cancelled) setCommits([]); });
+    return () => { cancelled = true; };
   }, [project.path]);
 
   const hasIdentity = detected.kind === 'tracked';
   const identity = hasIdentity ? detected.identity : null;
   const untrackedKey = detected.kind === 'untracked' ? detected.keyPath : null;
+
+  // Whether the repo's `.git/config` has both [user] name and
+  // email. `git commit` refuses to run without these, and the
+  // raw error from git is a wall of English the user does not
+  // want to see. The Quick Actions row uses this to disable the
+  // Commit button (and surface a tooltip) up front.
+  //   - `repoConfig` null means the IPC is still loading; we
+  //     treat that as "not known yet" and let the click through
+  //     (the backend will refuse if needed).
+  //   - hasConfig=false (no .git/config at all) is also "not
+  //     known", same treatment.
+  const hasUserIdentity =
+    !!repoConfig &&
+    repoConfig.hasConfig &&
+    !!repoConfig.userName?.trim() &&
+    !!repoConfig.userEmail?.trim();
 
   return (
     <div className="flex flex-col gap-5">
@@ -775,6 +886,77 @@ function ProjectDetail({ project, detected, hasIdentities, repoConfig, isRepo, i
             <KV label={t('projects.detail.userName')} value={repoConfig.userName} />
             <KV label={t('projects.detail.userEmail')} value={repoConfig.userEmail} mono />
             <KV label={t('projects.detail.sshKey')} value={repoConfig.sshKeyPath} mono />
+          </div>
+        </div>
+      )}
+
+      {/* Quick Actions: fetch / pull / commit / push. Only shown
+          for projects that ARE git repositories. Buttons are
+          disabled when no remote is configured (push/pull) or
+          while a git op is already running. */}
+      {isRepo !== false && (
+        <div>
+          <SectionLabel>{t('gitOps.quickActions')}</SectionLabel>
+          <div className="rounded-xl border border-border bg-bg-0 p-3 flex flex-col gap-2">
+            {/* 3-column grid for the 3 remaining actions (commit /
+                pull / push). Keeping it as a single row visually
+                groups "git operations" against the separate
+                identity / SSH block below. */}
+            <div className="grid grid-cols-3 gap-2">
+              <Button variant="outline" size="sm" onClick={onPull} disabled={opsBusy || !repoConfig?.remoteUrl}>
+                {t('gitOps.pull.label')}
+              </Button>
+              {/* Commit needs [user] name + email in the repo's
+                  .git/config. `repoConfig` is null only when the
+                  IPC has not returned yet (e.g. project just
+                  added), in which case we still allow the click —
+                  the backend will surface a clearer error if it
+                  turns out to be missing. The common case (a
+                  cloned repo with no per-repo identity) is
+                  covered by `!hasUserIdentity`. */}
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Button
+                    variant="default"
+                    size="sm"
+                    onClick={onCommit}
+                    disabled={opsBusy || !hasUserIdentity}
+                  >
+                    {t('gitOps.commit.label')}
+                  </Button>
+                </TooltipTrigger>
+                {!hasUserIdentity && (
+                  <TooltipContent>{t('gitOps.commit.needIdentity')}</TooltipContent>
+                )}
+              </Tooltip>
+              <Button variant="default" size="sm" onClick={onPush} disabled={opsBusy || !repoConfig?.remoteUrl}>
+                {t('gitOps.push.label')}
+              </Button>
+            </div>
+            {status && (
+              <div className="flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-text-1">
+                {status.porcelain.trim() ? (
+                  <span className="text-warning font-semibold [[data-theme=dark]_&]:text-[#fcd34d]">
+                    {t('gitOps.status.uncommitted', { count: status.porcelain.split('\n').filter(Boolean).length })}
+                  </span>
+                ) : (
+                  <span>{t('gitOps.status.clean')}</span>
+                )}
+                {status.hasUpstream && status.ahead != null && status.ahead > 0 && (
+                  <span className="text-brand-strong font-semibold [[data-theme=dark]_&]:text-[#93c5fd]">
+                    {t('gitOps.status.ahead', { count: status.ahead })}
+                  </span>
+                )}
+                {status.hasUpstream && status.behind != null && status.behind > 0 && (
+                  <span className="text-danger font-semibold [[data-theme=dark]_&]:text-[#fca5a5]">
+                    {t('gitOps.status.behind', { count: status.behind })}
+                  </span>
+                )}
+                {!repoConfig?.remoteUrl && (
+                  <span className="text-text-2">{t('gitOps.status.noRemote')}</span>
+                )}
+              </div>
+            )}
           </div>
         </div>
       )}
