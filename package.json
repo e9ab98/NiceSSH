@@ -1,7 +1,7 @@
 {
   "name": "nicessh",
   "private": true,
-  "version": "0.3.91",
+  "version": "0.3.95",
   "type": "module",
   "scripts": {
     "dev": "vite",
