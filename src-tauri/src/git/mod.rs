@@ -7,6 +7,8 @@
 //! rationale and the function-to-module mapping.
 
 pub mod bind;
+pub mod init;
 pub mod io;
+pub mod ops;
 pub mod protocol;
 pub mod splice;

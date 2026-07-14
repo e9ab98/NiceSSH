@@ -1,5 +1,5 @@
 use std::path::Path;
-use crate::git::{bind, io, splice};
+use crate::git::{bind, init, io, ops, splice};
 
 use crate::config_store;
 use crate::error::{AppError, Result};
@@ -22,6 +22,17 @@ pub fn apply_identity_to_repo(
 ) -> Result<bind::BindOutcome> {
     bind::apply_identity_to_repo(project_id, identity_id)
 }
+
+/// Thin-shell IPC command. See [`crate::git::init::init_repo`] for the
+/// actual logic. The command is intentionally narrow: it does NOT
+/// touch SSH keys or remote URLs. The UI is expected to chain into
+/// `apply_identity_to_repo` after a successful init, which already
+/// knows how to handle the HTTPS / needs-remote dialogs.
+#[tauri::command]
+pub fn init_repo(path: String, identity_id: String) -> Result<()> {
+    init::init_repo(path, identity_id)
+}
+
 
 /// Inner parser reused by `apply_identity_to_repo` so we do not need
 /// to invoke the Tauri command (`#[tauri::command]`) machinery just
@@ -664,3 +675,40 @@ pub fn set_global_git_config(identity_id: String) -> Result<GlobalGitConfigChang
     })
 }
 
+
+/// Thin-shell IPC command. See [`crate::git::ops::status`] for the
+/// actual logic. Returns a [`crate::git::ops::RepoStatus`] snapshot
+/// (porcelain output + ahead/behind counts) used to render the
+/// Projects view's Quick Actions row.
+#[tauri::command]
+pub fn git_status(path: String) -> Result<ops::RepoStatus> {
+    ops::status(path)
+}
+
+/// Thin-shell IPC command. See [`crate::git::ops::commit`].
+/// `add_all` controls whether `git add .` is run before the commit.
+#[tauri::command]
+pub fn git_commit(path: String, message: String, add_all: bool) -> Result<String> {
+    ops::commit(path, message, add_all)
+}
+
+/// Thin-shell IPC command. See [`crate::git::ops::push`].
+/// `force` maps to `--force-with-lease` (NOT `--force`), so a
+/// destructive overwrite is guarded by git itself.
+#[tauri::command]
+pub fn git_push(path: String, force: bool) -> Result<String> {
+    ops::push(path, force)
+}
+
+/// Thin-shell IPC command. See [`crate::git::ops::pull`].
+/// `rebase` controls the `--rebase` flag.
+#[tauri::command]
+pub fn git_pull(path: String, rebase: bool) -> Result<String> {
+    ops::pull(path, rebase)
+}
+
+/// Thin-shell IPC command. See [`crate::git::ops::fetch`].
+#[tauri::command]
+pub fn git_fetch(path: String) -> Result<String> {
+    ops::fetch(path)
+}
