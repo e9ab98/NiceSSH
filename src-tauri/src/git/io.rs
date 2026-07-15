@@ -23,6 +23,34 @@ use crate::{history, paths};
 /// Used by `apply_identity_to_repo` (the `BindOutcome::SshStyle` and
 /// `BindOutcome::NeedsRemote` → ssh-style fallback branches). Splice
 /// layer is [`splice::splice_identity_into_config`].
+/// Read the first `[remote "..."] url = ...` line out of a raw
+/// `.git/config` body. Duplicates a tiny subset of
+/// `commands::git::get_repo_git_config_inner` so `clean_repo_gitconfig`
+/// can decide whether to write sshCommand without an extra IPC
+/// round-trip. Returns `None` if no remote is configured.
+///
+/// Implementation: 5-line parser that mirrors the section-detection
+/// logic in `get_repo_git_config_inner` exactly. Pure function —
+/// does not touch the filesystem.
+pub(crate) fn extract_first_remote_url(raw: &str) -> Option<String> {
+    let mut in_remote = false;
+    for line in raw.lines() {
+        let trimmed = line.trim();
+        if let Some(rest) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
+            in_remote = rest.trim().to_ascii_lowercase().starts_with("remote");
+            continue;
+        }
+        if in_remote {
+            if let Some((k, v)) = trimmed.split_once('=') {
+                if k.trim().eq_ignore_ascii_case("url") {
+                    return Some(v.trim().trim_matches('"').to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
 pub(crate) fn write_repo_gitconfig(repo_path: &Path, identity: &Identity) -> Result<()> {
     let gitconfig = repo_path.join(".git").join("config");
     if !gitconfig.exists() {
@@ -89,8 +117,22 @@ pub(crate) fn write_repo_user_only(repo_path: &Path, identity: &Identity) -> Res
         )));
     }
     let raw = std::fs::read_to_string(&gitconfig)?;
+    // Pre-scrub every nicessh-managed section before the splice.
+    // This drops the previous identity's [user] block AND any
+    // [core] sshCommand line left over from an SSH binding
+    // (HTTPS repos must not carry sshCommand at all).
+    //
+    // This function is only called from apply_identity_to_repo's
+    // BindOutcome::UserOnly branch, so it always runs on an
+    // HTTPS-or-unknown-protocol repo. The strip is safe here:
+    // any user-written (non-managed) [user] block would also be
+    // dropped, but in practice a repo that has been bound by
+    // nicessh before will have the # nicessh-managed marker on
+    // the previous [user] block, and a fresh binding is
+    // exactly when the previous identity should be overwritten.
+    let stripped = splice::strip_managed_block(&raw);
     let new_raw = splice::splice_user_only_into_config(
-        &raw,
+        &stripped,
         &identity.user_name,
         &identity.user_email,
     );
@@ -148,6 +190,14 @@ pub(crate) fn clean_repo_gitconfig(project_id: String) -> Result<()> {
         )));
     }
     let raw = std::fs::read_to_string(&gitconfig)?;
+    // Decide whether the rewritten managed block needs a
+    // [core] sshCommand line. HTTPS repos must NOT carry one
+    // (the SSH key is dead weight on HTTPS; centralised in
+    // git::protocol::should_emit_sshcommand_for_protocol so
+    // every writer agrees).
+    let remote_url = extract_first_remote_url(&raw);
+    let protocol = remote_url.as_deref().map(crate::git_config::classify_remote_url);
+    let emit_sshcommand = crate::git::protocol::should_emit_sshcommand_for_protocol(protocol.as_deref());
     // Keep sections that are clearly git's own: [core] (only the
     // housekeeping keys git writes), [remote "..."], [branch "..."].
     // Drop everything else (managed blocks, anonymous user/core
@@ -177,11 +227,23 @@ pub(crate) fn clean_repo_gitconfig(project_id: String) -> Result<()> {
         kept.join("\n") + "\n"
     };
     let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
-    let ssh_cmd = format!("ssh -i {} -o IdentitiesOnly=yes", full_key);
-    let managed_block = format!(
-        "\n# nicessh-managed\n[user]\n    name = {}\n    email = {}\n[core]\n    sshCommand = {}\n",
-        identity.user_name, identity.user_email, ssh_cmd
-    );
+    let managed_block = if emit_sshcommand {
+        let ssh_cmd = format!("ssh -i {} -o IdentitiesOnly=yes", full_key);
+        format!(
+            "\n# nicessh-managed\n[user]\n    name = {}\n    email = {}\n[core]\n    sshCommand = {}\n",
+            identity.user_name, identity.user_email, ssh_cmd
+        )
+    } else {
+        // HTTPS (or any protocol where sshCommand is dead weight):
+        // emit only the [user] block. The flush_kept_section pass
+        // above has already dropped any pre-existing [core] sshCommand
+        // from the file (KEEP whitelist does not contain it), so this
+        // branch is the source of truth for the HTTPS shape.
+        format!(
+            "\n# nicessh-managed\n[user]\n    name = {}\n    email = {}\n",
+            identity.user_name, identity.user_email
+        )
+    };
     let new_raw = format!("{}{}", prefix, managed_block.trim_start_matches('\n'));
     history::commit_change(
         "clean_repo_gitconfig",
@@ -333,13 +395,26 @@ mod io_tests {
     }
 
     #[test]
-    fn write_repo_user_only_does_not_touch_sshcommand() {
+    fn write_repo_user_only_scrubs_stale_sshcommand() {
         // write_repo_user_only is the HTTPS-flavored IO wrapper. It
-        // must splice the [user] block but must NOT add a [core]
-        // sshCommand line and must NOT remove a pre-existing
-        // sshCommand line (that would be a behavioural surprise for
-        // users who later migrate the remote to SSH).
-        with_temp_home("io-user-only-keeps-sshcmd", || {
+        // pre-scrubs managed sections (including any [core] sshCommand
+        // left over from a previous SSH binding), then splices the
+        // fresh [user] block. The scrub is correct because:
+        //
+        //   1. This function is only called from
+        //      apply_identity_to_repo's BindOutcome::UserOnly branch
+        //      (i.e. always on an HTTPS-or-unknown-protocol repo).
+        //   2. sshCommand is dead weight on HTTPS (push/pull use
+        //      git-credential, not ssh).
+        //   3. A stale sshCommand on an HTTPS repo could shadow a
+        //      sibling SSH project's [core] via the shared
+        //      ~/.gitconfig-<label> includeIf.
+        //
+        // If the user later migrates the remote back to SSH, the
+        // SSH path (write_repo_gitconfig / splice_identity_into_config)
+        // re-emits the sshCommand from the bound identity, so the
+        // scrub is not destructive.
+        with_temp_home("io-user-only-scrubs-sshcmd", || {
             let id = ident("alice", "Alice", "a@x", "~/.ssh/id_alice");
             let repo = home().join("repo");
             write_repo_config(&repo,
@@ -349,8 +424,176 @@ mod io_tests {
             // [user] swapped
             assert!(after.contains("name = Alice"), "got:\n{after}");
             assert!(!after.contains("name = Old"), "old name leaked:\n{after}");
-            // sshCommand untouched
-            assert!(after.contains("sshCommand = ssh -i ~/.ssh/LEGACY"), "sshCommand must be preserved, got:\n{after}");
+            // sshCommand removed (was: preserved)
+            assert!(!after.contains("sshCommand"), "stale sshCommand must be scrubbed; got:\n{after}");
+            assert!(!after.contains("LEGACY"), "old key path must not survive; got:\n{after}");
         });
     }
+
+    #[test]
+    fn extract_first_remote_url_ssh() {
+        let raw = "[core]\n    repositoryformatversion = 0\n[remote \"origin\"]\n    url = git@github.com:user/repo.git\n    fetch = +refs/heads/*:refs/remotes/origin/*\n";
+        assert_eq!(
+            crate::git::io::extract_first_remote_url(raw),
+            Some("git@github.com:user/repo.git".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_first_remote_url_https() {
+        let raw = "[remote \"origin\"]\n    url = https://github.com/user/repo.git\n";
+        assert_eq!(
+            crate::git::io::extract_first_remote_url(raw),
+            Some("https://github.com/user/repo.git".to_string())
+        );
+    }
+
+    #[test]
+    fn extract_first_remote_url_no_remote() {
+        let raw = "[core]\n    repositoryformatversion = 0\n[user]\n    name = X\n";
+        assert_eq!(crate::git::io::extract_first_remote_url(raw), None);
+    }
+
+    #[test]
+    fn clean_repo_gitconfig_https_does_not_emit_sshcommand() {
+        with_temp_home("clean-https", || {
+            use crate::config_store::{AppConfig, Project};
+            let home = std::env::var("HOME").unwrap();
+            let repo = std::path::PathBuf::from(&home).join("repos/https_proj");
+            std::fs::create_dir_all(repo.join(".git")).unwrap();
+            std::fs::write(
+                repo.join(".git/config"),
+                "# nicessh-managed\n[core]\n    sshCommand = ssh -i /tmp/old\n[remote \"origin\"]\n    url = https://github.com/x/y.git\n",
+            ).unwrap();
+            let id = crate::config_store::Identity {
+                id: "id1".into(), label: "work".into(),
+                user_name: "Alice".into(), user_email: "a@x".into(),
+                key_path: "~/.ssh/id_work".into(), match_path: None,
+                host_alias: None, git_host: None,
+            };
+            let dir = crate::paths::nicessh_dir().unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
+            let cfg = AppConfig {
+                version: crate::config_store::CURRENT_VERSION,
+                theme: "system".into(),
+                identities: vec![id],
+                projects: vec![Project {
+                    id: "p1".into(),
+                    name: "https_proj".into(),
+                    path: repo.to_string_lossy().to_string(),
+                    identity_id: Some("id1".into()),
+                }],
+            };
+            std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+            super::clean_repo_gitconfig("p1".into()).unwrap();
+            let raw = std::fs::read_to_string(repo.join(".git/config")).unwrap();
+            assert!(!raw.contains("sshCommand"), "HTTPS clean must not emit sshCommand; got:\n{raw}");
+            assert!(raw.contains("name = Alice"), "user block must be written; got:\n{raw}");
+        });
+    }
+
+    #[test]
+    fn clean_repo_gitconfig_ssh_still_emits_sshcommand() {
+        with_temp_home("clean-ssh", || {
+            use crate::config_store::{AppConfig, Project};
+            let home = std::env::var("HOME").unwrap();
+            let repo = std::path::PathBuf::from(&home).join("repos/ssh_proj");
+            std::fs::create_dir_all(repo.join(".git")).unwrap();
+            std::fs::write(
+                repo.join(".git/config"),
+                "[remote \"origin\"]\n    url = git@github.com:x/y.git\n",
+            ).unwrap();
+            let id = crate::config_store::Identity {
+                id: "id1".into(), label: "work".into(),
+                user_name: "Alice".into(), user_email: "a@x".into(),
+                key_path: "~/.ssh/id_work".into(), match_path: None,
+                host_alias: None, git_host: None,
+            };
+            let dir = crate::paths::nicessh_dir().unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
+            let cfg = AppConfig {
+                version: crate::config_store::CURRENT_VERSION,
+                theme: "system".into(),
+                identities: vec![id],
+                projects: vec![Project {
+                    id: "p1".into(),
+                    name: "ssh_proj".into(),
+                    path: repo.to_string_lossy().to_string(),
+                    identity_id: Some("id1".into()),
+                }],
+            };
+            std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+            super::clean_repo_gitconfig("p1".into()).unwrap();
+            let raw = std::fs::read_to_string(repo.join(".git/config")).unwrap();
+            assert!(raw.contains("sshCommand"), "SSH clean must emit sshCommand; got:\n{raw}");
+            assert!(raw.contains("id_work"), "sshCommand should reference the identity key; got:\n{raw}");
+        });
+    }
+
+    #[test]
+    fn clean_repo_gitconfig_no_remote_emits_sshcommand() {
+        // Conservative: no remote = treat as SSH so a later switch to SSH is seamless.
+        with_temp_home("clean-no-remote", || {
+            use crate::config_store::{AppConfig, Project};
+            let home = std::env::var("HOME").unwrap();
+            let repo = std::path::PathBuf::from(&home).join("repos/no_remote");
+            std::fs::create_dir_all(repo.join(".git")).unwrap();
+            std::fs::write(repo.join(".git/config"), "[core]\n    repositoryformatversion = 0\n").unwrap();
+            let id = crate::config_store::Identity {
+                id: "id1".into(), label: "work".into(),
+                user_name: "Alice".into(), user_email: "a@x".into(),
+                key_path: "~/.ssh/id_work".into(), match_path: None,
+                host_alias: None, git_host: None,
+            };
+            let dir = crate::paths::nicessh_dir().unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
+            let cfg = AppConfig {
+                version: crate::config_store::CURRENT_VERSION,
+                theme: "system".into(),
+                identities: vec![id],
+                projects: vec![Project {
+                    id: "p1".into(),
+                    name: "no_remote".into(),
+                    path: repo.to_string_lossy().to_string(),
+                    identity_id: Some("id1".into()),
+                }],
+            };
+            std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
+            super::clean_repo_gitconfig("p1".into()).unwrap();
+            let raw = std::fs::read_to_string(repo.join(".git/config")).unwrap();
+            assert!(raw.contains("sshCommand"), "no-remote clean must emit sshCommand (conservative); got:\n{raw}");
+        });
+    }
+
+
+    #[test]
+    fn write_repo_user_only_scrubs_legacy_sshcommand() {
+        // Simulate: a repo that was previously bound via SSH has a
+        // [core] sshCommand line left over. The user then changes
+        // the remote to HTTPS and re-binds. The rewrite must drop
+        // the stale sshCommand (it's dead weight on HTTPS) while
+        // writing the new [user] block.
+        with_temp_home("user-only-scrub", || {
+            let home = std::env::var("HOME").unwrap();
+            let repo = std::path::PathBuf::from(&home).join("repos/migrated");
+            std::fs::create_dir_all(repo.join(".git")).unwrap();
+            std::fs::write(
+                repo.join(".git/config"),
+                "# nicessh-managed\n[core]\n    sshCommand = ssh -i ~/.ssh/old\n[remote \"origin\"]\n    url = https://github.com/x/y.git\n[user]\n    name = Old\n    email = o@x\n",
+            ).unwrap();
+            let id = crate::config_store::Identity {
+                id: "id1".into(), label: "https_proj".into(),
+                user_name: "New".into(), user_email: "n@x".into(),
+                key_path: "~/.ssh/id_https".into(), match_path: None,
+                host_alias: None, git_host: None,
+            };
+            super::write_repo_user_only(&repo, &id).unwrap();
+            let raw = std::fs::read_to_string(repo.join(".git/config")).unwrap();
+            assert!(raw.contains("name = New"), "new user block must be written; got:\n{raw}");
+            assert!(raw.contains("email = n@x"), "new email must be written; got:\n{raw}");
+            assert!(!raw.contains("sshCommand"), "stale sshCommand must be scrubbed; got:\n{raw}");
+            assert!(!raw.contains("~/.ssh/old"), "old key path must not survive; got:\n{raw}");
+        });
+    }
+
 }

@@ -406,6 +406,7 @@
     "sshOk": "OK",
     "status.clean": "Clean",
     "status.dirty": "Dirty (multiple sshCommand blocks)",
+  "status.stale-sshcommand-on-https": "Stale SSH key on HTTPS (harmless)",
     "status.no-config": "No .git/config",
     "status.no-identity": "No identity bound",
     "protocol": "Protocol",

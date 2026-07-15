@@ -406,6 +406,7 @@
     "sshOk": "通过",
     "status.clean": "干净",
     "status.dirty": "脏（多个 sshCommand 块）",
+  "status.stale-sshcommand-on-https": "HTTPS 上残留的 SSH key（无害）",
     "status.no-config": "无 .git/config",
     "status.no-identity": "未绑定身份",
     "protocol": "协议",

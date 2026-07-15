@@ -39,7 +39,8 @@ interface Props {
 function statusVariant(s: RepoAuditStatus): 'default' | 'success' | 'warning' | 'danger' {
   switch (s) {
     case 'clean': return 'success';
-    case 'dirty': return 'warning';
+    case 'dirty':
+    case 'stale-sshcommand-on-https': return 'warning';
     case 'no-config':
     case 'no-identity': return 'danger';
   }
@@ -76,7 +77,7 @@ export function RepoAuditDialog({ open, onOpenChange, onChanged }: Props) {
 
   const dirty = rows?.filter((r) => r.status === 'dirty') ?? [];
   const clean = rows?.filter((r) => r.status === 'clean') ?? [];
-  const other = rows?.filter((r) => r.status !== 'clean' && r.status !== 'dirty') ?? [];
+  const other = rows?.filter((r) => r.status !== 'clean' && r.status !== 'dirty' && r.status !== 'stale-sshcommand-on-https') ?? [];
 
   const handleClean = async (projectId: string) => {
     if (cleaning) return;

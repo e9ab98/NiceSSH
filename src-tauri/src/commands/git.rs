@@ -539,6 +539,15 @@ pub fn audit_repos(run_ssh_tests: Option<bool>) -> Result<Vec<RepoAudit>> {
             "dirty"
         } else if repo_cfg.ssh_command_count == 1 && repo_cfg.managed_by_nicessh {
             "clean"
+        } else if repo_cfg.remote_protocol.as_deref() == Some("https") {
+            // Stale nicessh-managed (or hand-written) sshCommand
+            // left over from a previous SSH binding or a manual
+            // edit. Harmless to push/fetch (HTTPS uses
+            // git-credential), but worth flagging and easy to
+            // clean up via the Audit dialog. The Clean button
+            // will now strip the stale line (see
+            // clean_repo_gitconfig -> should_emit_sshcommand_for_protocol).
+            "stale-sshcommand-on-https"
         } else {
             "dirty"
         };

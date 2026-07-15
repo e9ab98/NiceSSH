@@ -90,7 +90,7 @@ export interface RepoGitConfig {
 export const getRepoGitConfig = (path: string) =>
   ipc<RepoGitConfig>('get_repo_git_config', { path });
 
-export type RepoAuditStatus = 'clean' | 'dirty' | 'no-config' | 'no-identity';
+export type RepoAuditStatus = 'clean' | 'dirty' | 'no-config' | 'no-identity' | 'stale-sshcommand-on-https';
 
 export interface RepoAudit {
   projectId: string;
