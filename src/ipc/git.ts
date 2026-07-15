@@ -49,7 +49,21 @@ export const writeRepoRemote = (
 export const getRecentCommits = (path: string, limit = 10) =>
   ipc<{ hash: string; subject: string }[]>('get_recent_commits', { path, limit });
 export const testSshConnection = (identityId: string) =>
-  ipc<{ ok: boolean; message: string; timedOut: boolean }>('test_ssh_connection', { identityId });
+  ipc<ConnectionTestResult>('test_ssh_connection', { identityId });
+
+export interface ConnectionTestResult {
+  ok: boolean;
+  message: string;
+  timedOut: boolean;
+  needsCredentials?: boolean;
+  credentialsSaved?: boolean;
+}
+
+export const testHttpsConnection = (path: string) =>
+  ipc<ConnectionTestResult>('test_https_connection', { path });
+
+export const testHttpsConnectionWithCredentials = (path: string, username: string, password: string) =>
+  ipc<ConnectionTestResult>('test_https_connection_with_credentials', { path, username, password });
 
 export interface RepoGitConfig {
   hasConfig: boolean;

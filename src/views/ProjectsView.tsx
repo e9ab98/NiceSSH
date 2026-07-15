@@ -658,12 +658,14 @@ export function ProjectsView() {
             onUnlock={handleUnlock}
           />
         )}
-        {identity && (
+        {selected && (identity || repoConfig?.remoteProtocol === 'https') && (
           <ConnectionTesterDialog
             open={testerOpen}
             onOpenChange={setTesterOpen}
-            identityId={identity.id}
-            identityLabel={identity.label}
+            mode={repoConfigs[selected?.id ?? '']?.remoteProtocol === 'https' ? 'https' : 'ssh'}
+            projectPath={selected?.path ?? ''}
+            identityId={identity?.id}
+            identityLabel={identity?.label}
           />
         )}
         {contextMenu && (
@@ -963,19 +965,20 @@ function ProjectDetail({ project, detected, hasIdentities, repoConfig, isRepo, i
 
       {/* Actions */}
       <div className="flex flex-wrap gap-2">
-        {!hasIdentity ? (
+        {!hasIdentity && (
           <Button variant="default" onClick={onSwitch} disabled={!hasIdentities} className="flex-1">
             {untrackedKey ? t('projects.rebindIdentity') : t('projects.bindIdentity')}
           </Button>
-        ) : (
-          <>
-            <Button variant="default" onClick={onSwitch} className="flex-1">
-              {t('projects.switchIdentity')}
-            </Button>
-            <Button variant="outline" onClick={onTest} className="flex-1">
-              {t('projects.testSsh')}
-            </Button>
-          </>
+        )}
+        {hasIdentity && (
+          <Button variant="default" onClick={onSwitch} className="flex-1">
+            {t('projects.switchIdentity')}
+          </Button>
+        )}
+        {(repoConfig?.remoteProtocol === 'https' || hasIdentity) && (
+          <Button variant="outline" onClick={onTest} className="flex-1">
+            {repoConfig?.remoteProtocol === 'https' ? t('projects.testHttps') : t('projects.testSsh')}
+          </Button>
         )}
         {hasIdentity && (
           <Button variant="ghost" onClick={onSetAsGlobal} className="w-full">

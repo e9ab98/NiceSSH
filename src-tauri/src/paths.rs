@@ -47,30 +47,58 @@ pub fn ssh_config_path() -> Result<PathBuf> {
 /// like an SSH key file (`.pub` / `.key` / `.pem` extension, well-known
 /// default name, or any `id_*` prefix) we use the stored value as-is.
 /// Otherwise we treat it as a directory and join with `label`.
+/// Resolve the *displayed* full path of an identity's private key.
+///
+/// `key_path` may be stored in one of two shapes (see the
+/// git_ops::init module for where the split originates):
+///   - a bare directory (e.g. `~/.ssh/` or `/Users/x/.ssh/e9ab98-GitHub`)
+///   - a full file path (e.g. `/Users/x/.ssh/id_work`) — legacy data.
+///
+/// We detect the legacy shape by looking at the basename: if it looks
+/// like an SSH key file (`.pub` / `.key` / `.pem` extension, well-known
+/// default name, or any `id_*` prefix) we use the stored value as-is.
+/// Otherwise we treat it as a directory and join with `label`.
+///
+/// **Path separator**: the returned string is always POSIX-style
+/// (forward slashes), even on Windows. The primary caller writes
+/// the result into a `git config sshCommand` directive, which
+/// git / ssh consume verbatim on every platform — `ssh -i
+/// C:/Users/x/.ssh/id_work` works under Windows' bundled OpenSSH,
+/// while backslashes would have to be escaped to avoid being
+/// interpreted as escape characters by ssh itself.
 pub fn resolve_key_path(key_path: &str, label: &str) -> String {
-    let trimmed = key_path.replace(['/', '\\'], std::path::MAIN_SEPARATOR_STR);
-    let trimmed = trimmed.trim_end_matches(std::path::MAIN_SEPARATOR);
-    let basename = trimmed
-        .rsplit(std::path::MAIN_SEPARATOR)
-        .next()
-        .unwrap_or(trimmed);
     // An empty `key_path` is not a file — return the label as the
     // best-effort display value.
     if key_path.is_empty() {
         return label.to_string();
     }
+
+    // Normalize to forward slashes for inspection so the
+    // basename check below is platform-agnostic.
+    let normalized = key_path.replace('\\', "/");
+    let basename = normalized
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .unwrap_or(&normalized);
+
     let looks_like_file = basename.ends_with(".pub")
         || basename.ends_with(".key")
         || basename.ends_with(".pem")
         || basename.starts_with("id_");
     if looks_like_file {
-        return key_path.to_string();
+        // Legacy / explicit full-path shape. Normalize any
+        // backslashes from Windows callers to forward slashes
+        // so the resulting sshCommand is portable.
+        return key_path.replace('\\', "/");
     }
-    let sep = std::path::MAIN_SEPARATOR;
-    let dir = if key_path.ends_with(sep) || key_path.ends_with('/') {
-        key_path.to_string()
+
+    // Directory shape: join with the label using `/`. If the
+    // stored path already ends in `/`, do not add another one.
+    let dir = if normalized.ends_with('/') {
+        key_path.replace('\\', "/")
     } else {
-        format!("{}{}", key_path, sep)
+        format!("{}/", key_path.replace('\\', "/"))
     };
     format!("{}{}", dir, label)
 }
@@ -113,7 +141,9 @@ pub fn ensure_dir(path: &Path) -> Result<()> {
 mod tests {
     use super::*;
 
-    fn with_temp_home<F: FnOnce()>(suffix: &str, f: F) { crate::test_helpers::with_temp_home(suffix, f); }
+    fn with_temp_home<F: FnOnce()>(suffix: &str, f: F) {
+        crate::test_helpers::with_temp_home(suffix, f);
+    }
 
     #[test]
     fn test_expand_home_simple() {
@@ -134,23 +164,50 @@ mod tests {
     #[test]
     fn test_resolve_key_path_legacy_full_path() {
         // Legacy data: key_path is a full file path. Return as-is.
-        assert_eq!(resolve_key_path("/Users/x/.ssh/id_work", "id_work"),
-                   "/Users/x/.ssh/id_work");
-        assert_eq!(resolve_key_path("~/.ssh/id_ed25519", "id_ed25519"),
-                   "~/.ssh/id_ed25519");
-        assert_eq!(resolve_key_path("/Users/x/.ssh/legacy.pem", "anything"),
-                   "/Users/x/.ssh/legacy.pem");
+        assert_eq!(
+            resolve_key_path("/Users/x/.ssh/id_work", "id_work"),
+            "/Users/x/.ssh/id_work"
+        );
+        assert_eq!(
+            resolve_key_path("~/.ssh/id_ed25519", "id_ed25519"),
+            "~/.ssh/id_ed25519"
+        );
+        assert_eq!(
+            resolve_key_path("/Users/x/.ssh/legacy.pem", "anything"),
+            "/Users/x/.ssh/legacy.pem"
+        );
     }
 
     #[test]
     fn test_resolve_key_path_new_directory_with_label() {
         // New format: key_path is a directory, join with label.
-        assert_eq!(resolve_key_path("/Users/x/.ssh/e9ab98-GitHub", "id_work"),
-                   "/Users/x/.ssh/e9ab98-GitHub/id_work");
-        assert_eq!(resolve_key_path("/Users/x/.ssh/e9ab98-GitHub/", "id_work"),
-                   "/Users/x/.ssh/e9ab98-GitHub/id_work");
-        assert_eq!(resolve_key_path("~/.ssh", "id_ed25519"),
-                   "~/.ssh/id_ed25519");
+        assert_eq!(
+            resolve_key_path("/Users/x/.ssh/e9ab98-GitHub", "id_work"),
+            "/Users/x/.ssh/e9ab98-GitHub/id_work"
+        );
+        assert_eq!(
+            resolve_key_path("/Users/x/.ssh/e9ab98-GitHub/", "id_work"),
+            "/Users/x/.ssh/e9ab98-GitHub/id_work"
+        );
+        assert_eq!(
+            resolve_key_path("~/.ssh", "id_ed25519"),
+            "~/.ssh/id_ed25519"
+        );
+    }
+
+    #[test]
+    fn test_resolve_key_path_always_uses_posix_separator() {
+        // The return value is consumed by `git config sshCommand`,
+        // which git / ssh read on every platform. Forward slashes
+        // are the portable form — backslashes have to be escaped
+        // by the shell on Windows. Pin that contract here.
+        let r = resolve_key_path(r"C:\Users\x\.ssh\e9ab98-GitHub", "id_work");
+        assert!(
+            r.contains("/id_work") && !r.contains("\\id_work"),
+            "expected POSIX separator in joined path, got: {}",
+            r
+        );
+        assert_eq!(r, "C:/Users/x/.ssh/e9ab98-GitHub/id_work");
     }
 
     #[test]

@@ -2,11 +2,9 @@
 
 pub mod commands;
 pub mod config_store;
-pub mod scanner;
 pub mod git;
+pub mod scanner;
 
-#[cfg(test)]
-mod test_helpers;
 mod error;
 mod fs_safety;
 mod git_config;
@@ -15,6 +13,8 @@ pub mod paths;
 mod runner;
 mod ssh_config;
 mod ssh_keys;
+#[cfg(test)]
+mod test_helpers;
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
@@ -74,6 +74,8 @@ pub fn run() {
             commands::git::get_global_git_config,
             commands::git::set_global_git_config,
             commands::git::test_ssh_connection,
+            commands::git::test_https_connection,
+            commands::git::test_https_connection_with_credentials,
             commands::git::audit_repos,
             commands::git::clean_repo_gitconfig,
             commands::history::list_history,

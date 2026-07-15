@@ -15,63 +15,37 @@ pub struct ExecResult {
 }
 
 pub fn exec(program: &str, args: &[&str]) -> Result<ExecResult> {
-    let mut child = Command::new(program)
-        .args(args)
+    exec_with_env(program, args, &[])
+}
+
+pub fn exec_with_env(program: &str, args: &[&str], envs: &[(&str, &str)]) -> Result<ExecResult> {
+    let mut command = Command::new(program);
+    command.args(args);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::null())
         .spawn()
         .map_err(|e| AppError::GitCommand(format!("spawn {} failed: {}", program, e)))?;
 
-    let start = Instant::now();
-    let timeout = Duration::from_secs(TIMEOUT_SECS);
-    loop {
-        match child.try_wait() {
-            Ok(Some(status)) => {
-                let mut stdout = String::new();
-                let mut stderr = String::new();
-                if let Some(mut s) = child.stdout.take() {
-                    let _ = s.read_to_string(&mut stdout);
-                }
-                if let Some(mut s) = child.stderr.take() {
-                    let _ = s.read_to_string(&mut stderr);
-                }
-                truncate(&mut stdout);
-                truncate(&mut stderr);
-                return Ok(ExecResult {
-                    exit_code: status.code(),
-                    stdout,
-                    stderr,
-                    timed_out: false,
-                });
-            }
-            Ok(None) => {
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Ok(ExecResult {
-                        exit_code: None,
-                        stdout: String::new(),
-                        stderr: format!("timeout after {}s", TIMEOUT_SECS),
-                        timed_out: true,
-                    });
-                }
-                std::thread::sleep(Duration::from_millis(50));
-            }
-            Err(e) => {
-                return Err(AppError::GitCommand(format!("wait failed: {}", e)));
-            }
-        }
-    }
+    wait_for_child(child)
 }
 
-/// Like [exec] but writes the given bytes to stdin before reading
-/// stdout/stderr. Useful for commands that prompt interactively when an
-/// output file already exists (for example, ssh-keygen asks
-/// "Overwrite (y/n)?" when the target key file is already there).
-pub fn exec_with_stdin(program: &str, args: &[&str], stdin_bytes: &[u8]) -> Result<ExecResult> {
-    let mut child = Command::new(program)
-        .args(args)
+pub fn exec_with_stdin_and_env(
+    program: &str,
+    args: &[&str],
+    stdin_bytes: &[u8],
+    envs: &[(&str, &str)],
+) -> Result<ExecResult> {
+    let mut command = Command::new(program);
+    command.args(args);
+    for (key, value) in envs {
+        command.env(key, value);
+    }
+    let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
         .stdin(Stdio::piped())
@@ -81,9 +55,11 @@ pub fn exec_with_stdin(program: &str, args: &[&str], stdin_bytes: &[u8]) -> Resu
     if let Some(mut stdin) = child.stdin.take() {
         use std::io::Write;
         let _ = stdin.write_all(stdin_bytes);
-        // Dropping stdin closes it, signaling EOF.
     }
+    wait_for_child(child)
+}
 
+fn wait_for_child(mut child: std::process::Child) -> Result<ExecResult> {
     let start = Instant::now();
     let timeout = Duration::from_secs(TIMEOUT_SECS);
     loop {
@@ -91,11 +67,11 @@ pub fn exec_with_stdin(program: &str, args: &[&str], stdin_bytes: &[u8]) -> Resu
             Ok(Some(status)) => {
                 let mut stdout = String::new();
                 let mut stderr = String::new();
-                if let Some(mut s) = child.stdout.take() {
-                    let _ = s.read_to_string(&mut stdout);
+                if let Some(mut stream) = child.stdout.take() {
+                    let _ = stream.read_to_string(&mut stdout);
                 }
-                if let Some(mut s) = child.stderr.take() {
-                    let _ = s.read_to_string(&mut stderr);
+                if let Some(mut stream) = child.stderr.take() {
+                    let _ = stream.read_to_string(&mut stderr);
                 }
                 truncate(&mut stdout);
                 truncate(&mut stderr);
@@ -106,24 +82,28 @@ pub fn exec_with_stdin(program: &str, args: &[&str], stdin_bytes: &[u8]) -> Resu
                     timed_out: false,
                 });
             }
-            Ok(None) => {
-                if start.elapsed() > timeout {
-                    let _ = child.kill();
-                    let _ = child.wait();
-                    return Ok(ExecResult {
-                        exit_code: None,
-                        stdout: String::new(),
-                        stderr: format!("timeout after {}s", TIMEOUT_SECS),
-                        timed_out: true,
-                    });
-                }
-                std::thread::sleep(Duration::from_millis(50));
+            Ok(None) if start.elapsed() > timeout => {
+                let _ = child.kill();
+                let _ = child.wait();
+                return Ok(ExecResult {
+                    exit_code: None,
+                    stdout: String::new(),
+                    stderr: format!("timeout after {}s", TIMEOUT_SECS),
+                    timed_out: true,
+                });
             }
-            Err(e) => {
-                return Err(AppError::GitCommand(format!("wait failed: {}", e)));
-            }
+            Ok(None) => std::thread::sleep(Duration::from_millis(50)),
+            Err(error) => return Err(AppError::GitCommand(format!("wait failed: {}", error))),
         }
     }
+}
+
+/// Like [exec] but writes the given bytes to stdin before reading
+/// stdout/stderr. Useful for commands that prompt interactively when an
+/// output file already exists (for example, ssh-keygen asks
+/// "Overwrite (y/n)?" when the target key file is already there).
+pub fn exec_with_stdin(program: &str, args: &[&str], stdin_bytes: &[u8]) -> Result<ExecResult> {
+    exec_with_stdin_and_env(program, args, stdin_bytes, &[])
 }
 
 fn truncate(s: &mut String) {

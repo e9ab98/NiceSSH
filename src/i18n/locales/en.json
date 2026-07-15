@@ -54,6 +54,7 @@
     "gitUsingUnknownKey": "Git is using key {{path}}, which is not tracked by any identity.",
     "rebindIdentity": "Rebind Identity",
     "testSsh": "Test SSH",
+    "testHttps": "Test HTTPS",
     "recentCommits": "Recent commits",
     "noCommits": "No commits",
     "added": "Project added",
@@ -216,7 +217,15 @@
     "authenticated": "✓ Authenticated",
     "timedOut": "⏱ Connection timed out",
     "failed": "✗ Failed",
-    "noOutput": "(no output)"
+    "noOutput": "(no output)",
+    "httpsTitle": "Test HTTPS Connection",
+    "httpsAuthenticated": "✓ HTTPS authenticated; remote repository is readable",
+    "credentialsPrompt": "Existing credentials failed. Enter a username and password or access token to retry.",
+    "username": "Username",
+    "passwordOrToken": "Password or access token",
+    "credentialsSaveHint": "After a successful test, Git Credential Helper will save these credentials in the system credential manager.",
+    "testAndSave": "Test and save credentials",
+    "credentialsSaved": "Credentials saved in the system Git credential manager."
   },
   "sshKeys": {
     "title": "SSH Keys",

@@ -1,5 +1,6 @@
-use std::path::Path;
 use crate::git::{bind, init, io, ops, splice};
+use std::path::Path;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use crate::config_store;
 use crate::error::{AppError, Result};
@@ -32,7 +33,6 @@ pub fn apply_identity_to_repo(
 pub fn init_repo(path: String, identity_id: String) -> Result<()> {
     init::init_repo(path, identity_id)
 }
-
 
 /// Inner parser reused by `apply_identity_to_repo` so we do not need
 /// to invoke the Tauri command (`#[tauri::command]`) machinery just
@@ -101,7 +101,6 @@ pub(crate) fn get_repo_git_config_inner(repo_path: &Path) -> Result<RepoGitConfi
     })
 }
 
-
 /// Write or replace `[remote "<name>"]` in a repo's `.git/config`.
 ///
 /// Used as the second step of bind-after-promote: when
@@ -125,11 +124,7 @@ pub(crate) fn get_repo_git_config_inner(repo_path: &Path) -> Result<RepoGitConfi
 /// Thin-shell IPC command. See [`crate::git::bind::write_repo_remote`]
 /// for the actual logic.
 #[tauri::command]
-pub fn write_repo_remote(
-    path: String,
-    name: Option<String>,
-    url: String,
-) -> Result<String> {
+pub fn write_repo_remote(path: String, name: Option<String>, url: String) -> Result<String> {
     bind::write_repo_remote(path, name, url)
 }
 
@@ -174,6 +169,156 @@ pub struct SshTestResult {
     pub timed_out: bool,
 }
 
+#[derive(serde::Serialize)]
+#[serde(rename_all = "camelCase")]
+pub struct HttpsTestResult {
+    pub ok: bool,
+    pub message: String,
+    pub timed_out: bool,
+    pub needs_credentials: bool,
+    pub credentials_saved: bool,
+}
+
+fn format_test_output(stdout: &str, stderr: &str) -> String {
+    let output = format!("{}{}", stdout, stderr);
+    let mut truncated: String = output.chars().take(500).collect();
+    if output.chars().count() > 500 {
+        truncated.push('…');
+    }
+    truncated.trim().to_string()
+}
+
+fn is_https_auth_failure(output: &str) -> bool {
+    let lower = output.to_ascii_lowercase();
+    [
+        "authentication failed",
+        "could not read username",
+        "could not read password",
+        "terminal prompts disabled",
+        "http 401",
+        "http 403",
+        "requested url returned error: 401",
+        "requested url returned error: 403",
+    ]
+    .iter()
+    .any(|needle| lower.contains(needle))
+}
+
+fn parse_https_remote(remote_url: &str) -> Result<(String, String, String)> {
+    let (protocol, rest) = remote_url
+        .trim()
+        .split_once("://")
+        .ok_or_else(|| AppError::GitCommand("invalid HTTPS remote URL".into()))?;
+    if protocol != "https" && protocol != "http" {
+        return Err(AppError::GitCommand("remote is not HTTP(S)".into()));
+    }
+    let (authority, path) = rest.split_once('/').unwrap_or((rest, ""));
+    let host = authority.rsplit('@').next().unwrap_or(authority);
+    if host.is_empty() {
+        return Err(AppError::GitCommand("HTTPS remote has no host".into()));
+    }
+    Ok((protocol.to_string(), host.to_string(), path.to_string()))
+}
+
+fn credential_payload(remote_url: &str, username: &str, password: &str) -> Result<String> {
+    let (protocol, host, path) = parse_https_remote(remote_url)?;
+    Ok(format!(
+        "protocol={}\nhost={}\npath={}\nusername={}\npassword={}\n\n",
+        protocol, host, path, username, password
+    ))
+}
+
+fn https_remote_for_repo(path: &str) -> Result<String> {
+    let config = get_repo_git_config(path.to_string())?;
+    match (config.remote_url, config.remote_protocol.as_deref()) {
+        (Some(url), Some("https")) => Ok(url),
+        _ => Err(AppError::GitCommand("project origin is not HTTP(S)".into())),
+    }
+}
+
+fn run_https_test(path: &str, envs: &[(&str, &str)]) -> Result<HttpsTestResult> {
+    let result = runner::exec_with_env(
+        "git",
+        &["-C", path, "ls-remote", "--exit-code", "origin"],
+        envs,
+    )?;
+    let message = format_test_output(&result.stdout, &result.stderr);
+    Ok(HttpsTestResult {
+        ok: result.exit_code == Some(0),
+        needs_credentials: !result.timed_out && is_https_auth_failure(&message),
+        message,
+        timed_out: result.timed_out,
+        credentials_saved: false,
+    })
+}
+
+#[tauri::command]
+pub fn test_https_connection(path: String) -> Result<HttpsTestResult> {
+    https_remote_for_repo(&path)?;
+    run_https_test(&path, &[("GIT_TERMINAL_PROMPT", "0")])
+}
+
+#[tauri::command]
+pub fn test_https_connection_with_credentials(
+    path: String,
+    username: String,
+    password: String,
+) -> Result<HttpsTestResult> {
+    if username.trim().is_empty() || password.is_empty() {
+        return Err(AppError::GitCommand(
+            "username and password/token are required".into(),
+        ));
+    }
+    let remote_url = https_remote_for_repo(&path)?;
+    let helper_path = std::env::temp_dir().join(format!(
+        "nicessh-git-askpass-{}-{}.sh",
+        std::process::id(),
+        SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_nanos()
+    ));
+    std::fs::write(
+        &helper_path,
+        "#!/bin/sh\ncase \"$1\" in\n  *sername*) printf '%s\\n' \"$NICESSH_GIT_USERNAME\" ;;\n  *) printf '%s\\n' \"$NICESSH_GIT_PASSWORD\" ;;\nesac\n",
+    )?;
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        std::fs::set_permissions(&helper_path, std::fs::Permissions::from_mode(0o700))?;
+    }
+    let helper = helper_path.to_string_lossy().to_string();
+    let mut result = run_https_test(
+        &path,
+        &[
+            ("GIT_TERMINAL_PROMPT", "0"),
+            ("GIT_ASKPASS", &helper),
+            ("NICESSH_GIT_USERNAME", username.trim()),
+            ("NICESSH_GIT_PASSWORD", &password),
+        ],
+    );
+    let _ = std::fs::remove_file(&helper_path);
+    if let Ok(test_result) = &mut result {
+        if test_result.ok {
+            let payload = credential_payload(&remote_url, username.trim(), &password)?;
+            let approve = runner::exec_with_stdin_and_env(
+                "git",
+                &["credential", "approve"],
+                payload.as_bytes(),
+                &[],
+            )?;
+            if approve.exit_code != Some(0) {
+                return Err(AppError::GitCommand(format_test_output(
+                    &approve.stdout,
+                    &approve.stderr,
+                )));
+            }
+            test_result.credentials_saved = true;
+        }
+    }
+    result
+}
+
 #[tauri::command]
 pub fn test_ssh_connection(identity_id: String) -> Result<SshTestResult> {
     let cfg = config_store::read()?;
@@ -199,12 +344,7 @@ pub fn test_ssh_connection(identity_id: String) -> Result<SshTestResult> {
         &format!("git@{}", host),
     ];
     let r = runner::exec("ssh", &args)?;
-    let out = format!("{}{}", r.stdout, r.stderr);
-    let truncated = if out.len() > 500 {
-        format!("{}…", &out[..500])
-    } else {
-        out
-    };
+    let truncated = format_test_output(&r.stdout, &r.stderr);
     let exit_ok = r.exit_code == Some(0) || r.exit_code == Some(1);
     let auth_ok = truncated.contains("successfully authenticated")
         || truncated.to_lowercase().contains("hi ");
@@ -326,7 +466,6 @@ pub fn get_repo_git_config(path: String) -> Result<RepoGitConfig> {
         remote_protocol: remote_protocol.map(|s| s.to_string()),
     })
 }
-
 
 /// Per-project audit result returned by `audit_repos` and used by the
 /// "Audit" dialog in the UI.
@@ -516,7 +655,10 @@ mod tests {
                  [core]\n    sshCommand = ssh -i ~/.ssh/id_alice -o IdentitiesOnly=yes\n",
             ).unwrap();
             let result = get_repo_git_config(repo.to_string_lossy().to_string()).unwrap();
-            assert_eq!(result.remote_url.as_deref(), Some("https://github.com/user/repo.git"));
+            assert_eq!(
+                result.remote_url.as_deref(),
+                Some("https://github.com/user/repo.git")
+            );
             assert_eq!(result.remote_protocol.as_deref(), Some("https"));
         });
     }
@@ -532,7 +674,10 @@ mod tests {
                 "[remote \"origin\"]\n    url = git@github.com:user/repo.git\n    fetch = +refs/heads/*:refs/remotes/origin/*\n",
             ).unwrap();
             let result = get_repo_git_config(repo.to_string_lossy().to_string()).unwrap();
-            assert_eq!(result.remote_url.as_deref(), Some("git@github.com:user/repo.git"));
+            assert_eq!(
+                result.remote_url.as_deref(),
+                Some("git@github.com:user/repo.git")
+            );
             assert_eq!(result.remote_protocol.as_deref(), Some("ssh"));
         });
     }
@@ -551,6 +696,34 @@ mod tests {
             assert!(result.remote_url.is_none());
             assert!(result.remote_protocol.is_none());
         });
+    }
+
+    #[test]
+    fn test_https_auth_failure_detection() {
+        assert!(is_https_auth_failure(
+            "fatal: Authentication failed for 'https://git.example.com/team/repo.git/'"
+        ));
+        assert!(is_https_auth_failure(
+            "fatal: could not read Username for 'https://git.example.com': terminal prompts disabled"
+        ));
+        assert!(!is_https_auth_failure(
+            "fatal: unable to access 'https://git.example.com/team/repo.git/': SSL certificate problem"
+        ));
+    }
+
+    #[test]
+    fn test_credential_payload_uses_remote_components() {
+        let payload = credential_payload(
+            "https://git.example.com:8443/team/repo.git",
+            "alice",
+            "secret-token",
+        )
+        .unwrap();
+
+        assert_eq!(
+            payload,
+            "protocol=https\nhost=git.example.com:8443\npath=team/repo.git\nusername=alice\npassword=secret-token\n\n"
+        );
     }
 }
 
@@ -674,7 +847,6 @@ pub fn set_global_git_config(identity_id: String) -> Result<GlobalGitConfigChang
         ssh_key_path: full_key,
     })
 }
-
 
 /// Thin-shell IPC command. See [`crate::git::ops::status`] for the
 /// actual logic. Returns a [`crate::git::ops::RepoStatus`] snapshot

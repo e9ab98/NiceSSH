@@ -54,6 +54,7 @@
     "gitUsingUnknownKey": "Git 正在使用密钥 {{path}}，但 NiceSSH 没有对应的身份记录。",
     "rebindIdentity": "重新绑定身份",
     "testSsh": "测试 SSH",
+    "testHttps": "测试 HTTPS",
     "recentCommits": "最近提交",
     "noCommits": "暂无提交",
     "added": "项目已添加",
@@ -216,7 +217,15 @@
     "authenticated": "✓ 认证成功",
     "timedOut": "⏱ 连接超时",
     "failed": "✗ 失败",
-    "noOutput": "（无输出）"
+    "noOutput": "（无输出）",
+    "httpsTitle": "测试 HTTPS 连接",
+    "httpsAuthenticated": "✓ HTTPS 认证成功，可读取远程仓库",
+    "credentialsPrompt": "当前凭据认证失败，请输入用户名和密码或访问令牌重新测试。",
+    "username": "用户名",
+    "passwordOrToken": "密码或访问令牌",
+    "credentialsSaveHint": "测试成功后将通过 Git Credential Helper 保存到系统凭据管理器。",
+    "testAndSave": "测试并保存凭据",
+    "credentialsSaved": "凭据已保存到系统 Git 凭据管理器。"
   },
   "sshKeys": {
     "title": "SSH 密钥",
