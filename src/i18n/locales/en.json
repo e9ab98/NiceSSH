@@ -318,6 +318,7 @@
       "notChecked": "Not yet checked",
       "upToDate": "Up to date",
       "check": "Check now",
+    "checking": "Checking…",
       "update": "Update now",
       "notify": "Notify me when a new version is available",
       "restartHint": "Please close and reopen the app to apply the update.",

@@ -106,14 +106,6 @@ export function UpdateToast({ version, notes }: Props) {
           <>
             <Button
               size="sm"
-              variant="ghost"
-              onClick={onDismiss}
-              disabled={phase === 'downloading'}
-            >
-              {t('update.toast.later')}
-            </Button>
-            <Button
-              size="sm"
               onClick={onUpdateNow}
               disabled={phase === 'downloading' || phase === 'error'}
             >

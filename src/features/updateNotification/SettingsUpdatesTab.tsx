@@ -22,6 +22,7 @@ export function SettingsUpdatesTab() {
   const [current, setCurrent] = useState<string>('');
   const [latest, setLatest] = useState<UpdateInfo | null>(null);
   const [hasChecked, setHasChecked] = useState(false);
+  const [isChecking, setIsChecking] = useState(false);
   const [notify, setNotify] = useState<boolean>(shouldNotify());
   const [phase, setPhase] = useState<Phase>('idle');
   const [progress, setProgress] = useState(0);
@@ -41,11 +42,14 @@ export function SettingsUpdatesTab() {
     // "Check now" bypasses the 24h cache: clear the timestamp, then call.
     localStorage.removeItem(LS_KEYS.checked);
     setHasChecked(true);
+    setIsChecking(true);
     try {
       const info = await checkForUpdate();
       setLatest(info);
     } catch {
       toast.error(t('settings.updates.checkFailed'));
+    } finally {
+      setIsChecking(false);
     }
   };
 
@@ -168,8 +172,14 @@ export function SettingsUpdatesTab() {
         </div>
 
         <div className="flex gap-2 pt-2">
-          <Button size="sm" variant="outline" onClick={onCheck}>
-            {t('settings.updates.check')}
+          <Button
+            size="sm"
+            variant="outline"
+            onClick={onCheck}
+            disabled={isChecking}
+            data-testid="check-now-button"
+          >
+            {isChecking ? t('settings.updates.checking') : t('settings.updates.check')}
           </Button>
           {updateAvailable && phase === 'idle' && (
             <Button size="sm" onClick={onUpdate}>

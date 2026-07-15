@@ -81,13 +81,6 @@ describe('UpdateToast', () => {
     );
   });
 
-  it('Later dismisses the toast and marks the version', () => {
-    render(<UpdateToast version="0.1.42" />);
-    fireEvent.click(screen.getByText('[t:update.toast.later]'));
-    expect(localStorage.getItem(LS_KEYS.dismissed)).toBe('0.1.42');
-    expect(mockedToast.dismiss).toHaveBeenCalledWith('nicessh-update');
-  });
-
   it('X button dismisses the toast and marks the version', () => {
     render(<UpdateToast version="0.1.42" />);
     fireEvent.click(screen.getByTestId('update-toast-close'));

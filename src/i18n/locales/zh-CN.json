@@ -318,6 +318,7 @@
       "notChecked": "尚未检查",
       "upToDate": "已是最新",
       "check": "立即检查",
+    "checking": "检查中…",
       "update": "立即升级",
       "notify": "有新版本时通知",
       "restartHint": "请关闭并重新打开应用以应用更新。",
