@@ -48,3 +48,4 @@ scripts/.daily-review.env
 /scripts/README.daily-review.md
 /scripts/uninstall-daily-review-launchd.sh
 /scripts/run-daily-review.sh
+/docs/superpowers/specs/
