@@ -9,7 +9,7 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../com
 import { useProjectsStore } from '../store/projects';
 import { useIdentitiesStore, useKeysStore, type SshKeyInfo } from '../store/identities';
 import { useSettingsStore } from '../store/settings';
-import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, getGlobalGitConfig, gitStatus, initRepo, isGitRepo, setGlobalGitConfig, type RepoGitConfig, type GlobalGitConfig, type RepoStatus } from '../ipc/git';
+import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, getGlobalGitConfig, gitStatus, initRepo, isGitRepo, type RepoGitConfig, type GlobalGitConfig, type RepoStatus } from '../ipc/git';
 import { tryUnlockKey, isKeyEncrypted } from '../ipc/sshAdd';
 import { IdentitySwitcherDialog } from '../features/identitySwitcher/IdentitySwitcherDialog';
 import { RepoAuditDialog } from '../features/repoAudit/RepoAuditDialog';
@@ -491,24 +491,6 @@ export function ProjectsView() {
     }
   };
 
-  const handleSetAsGlobal = async () => {
-    if (!identity) return;
-    const target = identities.find((i) => i.id === identity.id);
-    if (!target) return;
-    if (!confirm(t('projects.setAsGlobalConfirm', { label: target.label }))) return;
-    try {
-      const result = await setGlobalGitConfig(target.id);
-      toast.success(
-        t('projects.setAsGlobalApplied', {
-          label: target.label,
-          email: result.userEmail,
-        })
-      );
-    } catch (e) {
-      toast.error(String(e));
-    }
-  };
-
   const handleDelete = async () => {
     if (!contextMenu) return;
     if (!confirm(t('projects.deleteConfirm'))) return;
@@ -614,7 +596,6 @@ export function ProjectsView() {
                 onSwitch={() => setSwitcherOpen(true)}
                 onTest={() => setTesterOpen(true)}
                 onRemove={() => { void handleRemove(selected.id); }}
-                onSetAsGlobal={() => { void handleSetAsGlobal(); }}
               />
             ) : (
               <div className="h-full min-h-[280px] flex flex-col items-center justify-center text-text-2 text-sm gap-2">
@@ -758,7 +739,7 @@ export function ProjectsView() {
   );
 }
 
-function ProjectDetail({ project, detected, keyPath, hasIdentities, repoConfig, isRepo, initializing, status, opsBusy, onInit, onCommit, onPull, onPush, onSwitch, onTest, onRemove, onSetAsGlobal, commits, setCommits }: {
+function ProjectDetail({ project, detected, keyPath, hasIdentities, repoConfig, isRepo, initializing, status, opsBusy, onInit, onCommit, onPull, onPush, onSwitch, onTest, onRemove, commits, setCommits }: {
   project: { id: string; name: string; path: string };
   detected: DetectedIdentity;
   /// Full private-key path for the bound identity, pre-resolved
@@ -787,7 +768,6 @@ function ProjectDetail({ project, detected, keyPath, hasIdentities, repoConfig, 
   onSwitch: () => void;
   onTest: () => void;
   onRemove: () => void;
-  onSetAsGlobal: () => void;
   /// Recent commits for this project. Lifted to the parent so the
   /// CommitDialog success callback can refresh it.
   commits: { hash: string; subject: string }[];
@@ -1010,11 +990,6 @@ function ProjectDetail({ project, detected, keyPath, hasIdentities, repoConfig, 
         {(repoConfig?.remoteProtocol === 'https' || hasIdentity) && (
           <Button variant="outline" onClick={onTest} className="flex-1">
             {repoConfig?.remoteProtocol === 'https' ? t('projects.testHttps') : t('projects.testSsh')}
-          </Button>
-        )}
-        {hasIdentity && (
-          <Button variant="ghost" onClick={onSetAsGlobal} className="w-full">
-            {t('projects.setAsGlobalDefault')}
           </Button>
         )}
         <Button variant="danger" onClick={onRemove}>{t('projects.removeMenu')}</Button>

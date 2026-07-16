@@ -208,6 +208,7 @@ mod bind_tests {
                 path: path.clone(),
                 identity_id: None,
             }).collect(),
+            global_default_identity_id: None,
         };
         fs::write(dir.join("config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
     }

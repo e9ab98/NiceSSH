@@ -6,6 +6,7 @@ import { Badge } from '../components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { useIdentitiesStore, useKeysStore } from '../store/identities';
+import { useGlobalDefaultStore } from '../store/globalDefault';
 import { IdentityFormDialog } from '../features/identityForm/IdentityFormDialog';
 import { KeyGeneratorDialog } from '../features/keyGenerator/KeyGeneratorDialog';
 import { ScanResultsDialog } from '../features/scanResults/ScanResultsDialog';
@@ -17,6 +18,97 @@ import { homeDir } from '@tauri-apps/api/path';
 
 type DeleteMode = 'record' | 'withFiles';
 
+/**
+ * Global-default picker shown at the top of the Identities view.
+ *
+ * Renders as a native `<select>` styled with the project's tokens
+ * (same pattern as SettingsView's theme / language / key-type
+ * pickers). Choosing an identity from the dropdown calls
+ * `useGlobalDefaultStore.set(id)`, which writes BOTH `~/.gitconfig`
+ * and the cfg pointer via the Rust `set_global_default_identity`
+ * command, then updates the store. The "Clear" button calls
+ * `clear()`, which drops the pointer only and leaves `~/.gitconfig`
+ * alone (the user's hand-edits are never silently undone).
+ *
+ * When the cfg-stored id points at a deleted identity
+ * (`globalDefaultId !== null && identity === undefined`) the
+ * dropdown falls back to the "no default" option rather than
+ * highlight a dangling record.
+ */
+function GlobalDefaultSection({
+  identities,
+  globalDefaultId,
+  busy,
+  onPick,
+  onClear,
+}: {
+  identities: Identity[];
+  globalDefaultId: string | null | undefined;
+  busy: boolean;
+  onPick: (id: string) => Promise<void>;
+  onClear: () => Promise<void>;
+}) {
+  const { t } = useTranslation();
+  const selected = identities.find((i) => i.id === globalDefaultId) ?? null;
+  // Treat the "loaded but the id no longer resolves" case as no
+  // default so the dropdown value matches what the UI promises.
+  const effectiveId = selected ? selected.id : '';
+  const noDefault = effectiveId === '';
+
+  return (
+    <Card className="p-4 mb-3">
+      <div className="flex items-start justify-between gap-3 mb-2">
+        <div className="min-w-0">
+          <p className="text-text-1 text-xs">
+            {t('identities.globalDefault.description')}
+          </p>
+        </div>
+        {!noDefault && (
+          <Button
+            variant="ghost"
+            size="sm"
+            disabled={busy}
+            onClick={() => { void onClear(); }}
+          >
+            {t('identities.globalDefault.clear')}
+          </Button>
+        )}
+      </div>
+      {identities.length === 0 ? (
+        <div className="text-text-2 text-sm py-2">
+          {t('identities.globalDefault.empty')}
+        </div>
+      ) : (
+        <label className="flex items-center justify-between gap-3">
+          <span className="text-text-1 text-sm shrink-0">
+            {t('identities.globalDefault.selectLabel')}
+          </span>
+          <select
+            value={effectiveId}
+            disabled={busy}
+            onChange={(e) => {
+              const next = e.target.value;
+              if (next === '') {
+                void onClear();
+              } else if (next !== effectiveId) {
+                void onPick(next);
+              }
+            }}
+            className="h-9 min-w-0 flex-1 max-w-md rounded-md border border-border bg-bg-0 px-3 text-sm text-text-0 disabled:opacity-60"
+          >
+            <option value="">{t('identities.globalDefault.noneOption')}</option>
+            {identities.map((id) => (
+              <option key={id.id} value={id.id}>
+                {`${id.label} — ${id.userName} <${id.userEmail}>`}
+              </option>
+            ))}
+          </select>
+        </label>
+      )}
+    </Card>
+  );
+}
+
 export function IdentitiesView() {
   const { t } = useTranslation();
   const { items, loading, refresh, create, update, remove } = useIdentitiesStore();
@@ -25,6 +117,11 @@ export function IdentitiesView() {
   // without a full page reload.
   const keys = useKeysStore((s) => s.items);
   const refreshKeys = useKeysStore((s) => s.refresh);
+  const globalDefaultId = useGlobalDefaultStore((s) => s.id);
+  const setGlobalDefault = useGlobalDefaultStore((s) => s.set);
+  const clearGlobalDefault = useGlobalDefaultStore((s) => s.clear);
+  const refreshGlobalDefault = useGlobalDefaultStore((s) => s.refresh);
+  const [globalDefaultBusy, setGlobalDefaultBusy] = useState(false);
   const [home, setHome] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Identity | null>(null);
@@ -41,8 +138,9 @@ export function IdentitiesView() {
   useEffect(() => {
     refresh();
     void refreshKeys();
+    void refreshGlobalDefault();
     void homeDir().then(setHome).catch(() => setHome(''));
-  }, [refresh, refreshKeys]);
+  }, [refresh, refreshKeys, refreshGlobalDefault]);
   const keyById = (id: string | null) => keys.find((key) => key.id === id) ?? null;
 
   const runScan = async () => {
@@ -148,6 +246,12 @@ export function IdentitiesView() {
     const deleteFiles = deleteMode === 'withFiles' && !!key;
     try {
       await remove(target.id, { deleteFiles });
+      // The deleted identity may have been the global default; if so the
+      // cfg-stored pointer now references a missing record. Refresh the
+      // global-default store so the section re-renders without a stale
+      // highlight. Best-effort: ignore failures since the main delete
+      // already toast-succeeded.
+      void refreshGlobalDefault();
       toast.success(
         deleteFiles ? t('identities.deletedWithFiles') : t('identities.deleted'),
       );
@@ -159,16 +263,72 @@ export function IdentitiesView() {
     }
   };
 
+  const handlePickGlobalDefault = async (id: string) => {
+    if (globalDefaultBusy) return;
+    setGlobalDefaultBusy(true);
+    try {
+      await setGlobalDefault(id);
+      const target = items.find((x) => x.id === id);
+      toast.success(
+        t('identities.globalDefault.applied', {
+          label: target?.label ?? '',
+          email: target?.userEmail ?? '',
+        }),
+      );
+    } catch (e) {
+      // The store has already reverted the optimistic update on
+      // failure, so the toast here is the only feedback.
+      toast.error(String(e));
+    } finally {
+      setGlobalDefaultBusy(false);
+    }
+  };
+
+  const handleClearGlobalDefault = async () => {
+    if (globalDefaultBusy) return;
+    setGlobalDefaultBusy(true);
+    try {
+      await clearGlobalDefault();
+      toast.success(t('identities.globalDefault.cleared'));
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setGlobalDefaultBusy(false);
+    }
+  };
+
   return (
     <TooltipProvider>
       <div className="p-6 max-w-4xl">
-        <div className="flex items-center justify-between mb-4 gap-2">
-          <h1 className="text-2xl font-semibold">{t('identities.title')}</h1>
+        <h1 className="text-2xl font-semibold mb-4">{t('identities.globalDefault.title')}</h1>
+        <GlobalDefaultSection
+          identities={items}
+          globalDefaultId={globalDefaultId}
+          busy={globalDefaultBusy}
+          onPick={handlePickGlobalDefault}
+          onClear={handleClearGlobalDefault}
+        />
+
+        {/* Section break: the global-default picker above is its own
+            concern; the cards below are the user's identity registry
+            (create / edit / generate / delete). The action buttons
+            (scan, + new) live next to the section title because they
+            only ever act on this list, not on the global-default
+            picker above. */}
+        <div className="mt-6 mb-2 flex items-center justify-between gap-2">
+          <div className="flex items-baseline gap-2">
+            <h2 className="text-2xl font-semibold">
+              {t('identities.section.identities')}
+            </h2>
+            <span className="text-text-2 text-sm">
+              {t('identities.section.count', { count: items.length })}
+            </span>
+          </div>
           <div className="flex gap-2">
-            <Button variant="outline" onClick={runScan} disabled={scanning}>
+            <Button variant="outline" size="sm" onClick={runScan} disabled={scanning}>
               {scanning ? t('scanResults.scanning') : t('scanResults.scan')}
             </Button>
-            <Button onClick={() => setFormOpen(true)}>{t('identities.newIdentity')}</Button>
+            <Button size="sm" onClick={() => setFormOpen(true)}>{t('identities.newIdentity')}</Button>
           </div>
         </div>
         {loading && <div className="text-text-1">{t('common.loading')}</div>}

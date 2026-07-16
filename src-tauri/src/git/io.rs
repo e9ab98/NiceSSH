@@ -380,6 +380,7 @@ mod io_tests {
                     path: repo.to_string_lossy().to_string(),
                     identity_id: Some(id.id.clone()),
                 }],
+                global_default_identity_id: None,
             };
             fs::create_dir_all(home().join(".nicessh")).unwrap();
             fs::write(home().join(".nicessh/config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
@@ -490,6 +491,7 @@ mod io_tests {
                     path: repo.to_string_lossy().to_string(),
                     identity_id: Some("id1".into()),
                 }],
+                global_default_identity_id: None,
             };
             std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
             super::clean_repo_gitconfig("p1".into()).unwrap();
@@ -529,6 +531,7 @@ mod io_tests {
                     path: repo.to_string_lossy().to_string(),
                     identity_id: Some("id1".into()),
                 }],
+                global_default_identity_id: None,
             };
             std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
             super::clean_repo_gitconfig("p1".into()).unwrap();
@@ -566,6 +569,7 @@ mod io_tests {
                     path: repo.to_string_lossy().to_string(),
                     identity_id: Some("id1".into()),
                 }],
+                global_default_identity_id: None,
             };
             std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
             super::clean_repo_gitconfig("p1".into()).unwrap();
@@ -573,7 +577,6 @@ mod io_tests {
             assert!(raw.contains("sshCommand"), "no-remote clean must emit sshCommand (conservative); got:\n{raw}");
         });
     }
-
 
     #[test]
     fn write_repo_user_only_scrubs_legacy_sshcommand() {

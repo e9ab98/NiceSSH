@@ -97,9 +97,6 @@
       "test": "测试连接"
     },
     "empty": "暂无项目。添加一个仓库开始使用。",
-    "setAsGlobalDefault": "设为全局默认",
-    "setAsGlobalConfirm": "将 {{label}} 设为全局 Git 身份？这将影响所有未匹配 includeIf 规则的仓库。",
-    "setAsGlobalApplied": "已将全局默认设为 {{label}}（{{email}}）",
     "remotePrompt": {
       "title": "项目缺少远程地址",
       "body": "在项目的 .git/config 里没找到远程地址，因此 NiceSSH 无法判断应该按 SSH 还是 HTTPS 来绑定身份。请填入远程地址：",
@@ -142,7 +139,23 @@
     "deleteNoKeyPath": "该身份没有关联的密钥文件",
     "deleted": "身份已删除",
     "deletedWithFiles": "身份及磁盘文件已删除",
-    "updated": "身份已更新"
+    "updated": "身份已更新",
+    "globalDefault": {
+      "title": "全局默认身份",
+      "description": "未匹配 includeIf 规则的仓库会使用此身份。在下方下拉框中选择一个身份即可设为全局默认。",
+      "activeBadge": "当前",
+      "clear": "清除",
+      "empty": "请先创建至少一个身份,再设置全局默认。",
+      "applied": "已将全局默认设为 {{label}}({{email}})",
+      "cleared": "已清除全局默认指针(你的 ~/.gitconfig 未被改动)",
+      "selectLabel": "默认身份",
+      "noneOption": "（无全局默认）"
+    },
+    "section": {
+      "identities": "项目级身份",
+      "count_one": "{{count}} 个身份",
+      "count_other": "{{count}} 个身份"
+    }
   },
   "identityForm": {
     "newTitle": "新建身份",
@@ -194,19 +207,16 @@
     "title": "切换身份",
     "empty": "还没有身份，请先创建一个。",
     "scope": {
-      "project": "本项目",
-      "global": "全局默认"
+      "project": "本项目"
     },
     "scopeHint": {
-      "project": "仅修改此仓库的 .git/config",
-      "global": "修改 ~/.gitconfig 兜底配置，影响所有未匹配 includeIf 的仓库"
+      "project": "仅修改此仓库的 .git/config"
     },
     "matchPathLabel": "匹配路径(includeIf gitdir:)",
     "matchPathPlaceholder": "例如 ~/work/",
     "matchPathHint": "将该目录(含子目录)下的所有仓库自动绑定到当前身份",
     "matchPathBrowse": "选择目录…",
-    "matchPathUpdated": "已更新匹配路径",
-    "globalApplied": "已将全局默认设为 {{label}}（{{email}}）"
+    "matchPathUpdated": "已更新匹配路径"
   },
   "passphrase": {
     "title": "解锁 SSH 密钥",
@@ -321,7 +331,7 @@
       "notChecked": "尚未检查",
       "upToDate": "已是最新",
       "check": "立即检查",
-    "checking": "检查中…",
+      "checking": "检查中…",
       "update": "立即升级",
       "notify": "有新版本时通知",
       "restartHint": "请关闭并重新打开应用以应用更新。",
@@ -410,7 +420,7 @@
     "sshOk": "通过",
     "status.clean": "干净",
     "status.dirty": "脏（多个 sshCommand 块）",
-  "status.stale-sshcommand-on-https": "HTTPS 上残留的 SSH key（无害）",
+    "status.stale-sshcommand-on-https": "HTTPS 上残留的 SSH key（无害）",
     "status.no-config": "无 .git/config",
     "status.no-identity": "未绑定身份",
     "protocol": "协议",

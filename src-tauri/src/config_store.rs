@@ -58,6 +58,20 @@ pub struct AppConfig {
     pub projects: Vec<Project>,
     pub identities: Vec<Identity>,
     pub ssh_keys: Vec<SshKey>,
+    /// Identity the user (or this App) has pushed as the global
+    /// `~/.gitconfig` default. `None` means either the user has
+    /// never used the "set as global default" action, OR they
+    /// explicitly cleared it. The widget backed by this field is
+    /// in the Identities view.
+    ///
+    /// Because `~/.gitconfig` is a file the user can edit by hand,
+    /// this field is treated as **advisory**: the UI shows the
+    /// record stored here as "the global default" when present,
+    /// but reads from the actual gitconfig as a fallback when the
+    /// stored id no longer resolves (e.g. the identity was
+    /// deleted, or the user wrote to ~/.gitconfig directly).
+    #[serde(default, rename = "globalDefaultIdentityId")]
+    pub global_default_identity_id: Option<String>,
 }
 
 impl Default for AppConfig {
@@ -68,6 +82,7 @@ impl Default for AppConfig {
             projects: Vec::new(),
             identities: Vec::new(),
             ssh_keys: Vec::new(),
+            global_default_identity_id: None,
         }
     }
 }

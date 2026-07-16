@@ -97,9 +97,6 @@
       "test": "Test connection"
     },
     "empty": "No projects yet. Add a repo to get started.",
-    "setAsGlobalDefault": "Set as global default",
-    "setAsGlobalConfirm": "Set {{label}} as the global Git identity? This will affect all repositories not matched by includeIf rules.",
-    "setAsGlobalApplied": "Global default set to {{label}} ({{email}})",
     "remotePrompt": {
       "title": "Project needs a remote URL",
       "body": "NiceSSH could not find a remote in this project's .git/config, so it cannot decide whether to bind the identity via SSH or HTTPS. Please supply the remote URL.",
@@ -142,7 +139,23 @@
     "deleteNoKeyPath": "This identity has no key file attached",
     "deleted": "Identity deleted",
     "deletedWithFiles": "Identity and key file deleted",
-    "updated": "Identity updated"
+    "updated": "Identity updated",
+    "globalDefault": {
+      "title": "Global default identity",
+      "description": "Used by repositories not matched by an includeIf rule. Pick an identity from the dropdown to set it as the global default.",
+      "activeBadge": "current",
+      "clear": "Clear",
+      "empty": "Create an identity first to set a global default.",
+      "applied": "Global default set to {{label}} ({{email}})",
+      "cleared": "Global default pointer cleared (your ~/.gitconfig is unchanged)",
+      "selectLabel": "Default",
+      "noneOption": "(no global default)"
+    },
+    "section": {
+      "identities": "Project identities",
+      "count_one": "{{count}} identity",
+      "count_other": "{{count}} identities"
+    }
   },
   "identityForm": {
     "newTitle": "New Identity",
@@ -194,19 +207,16 @@
     "title": "Switch Identity",
     "empty": "No identities. Create one first.",
     "scope": {
-      "project": "This project",
-      "global": "Global default"
+      "project": "This project"
     },
     "scopeHint": {
-      "project": "Affects only this repository's .git/config",
-      "global": "Affects ~/.gitconfig default for all repos without includeIf match"
+      "project": "Affects only this repository's .git/config"
     },
     "matchPathLabel": "Match path (includeIf gitdir:)",
     "matchPathPlaceholder": "e.g. ~/work/",
     "matchPathHint": "Auto-apply this identity to every repo under this folder",
     "matchPathBrowse": "Browse folder…",
-    "matchPathUpdated": "Match path updated",
-    "globalApplied": "Global default set to {{label}} ({{email}})"
+    "matchPathUpdated": "Match path updated"
   },
   "passphrase": {
     "title": "Unlock SSH Key",
@@ -321,7 +331,7 @@
       "notChecked": "Not yet checked",
       "upToDate": "Up to date",
       "check": "Check now",
-    "checking": "Checking…",
+      "checking": "Checking…",
       "update": "Update now",
       "notify": "Notify me when a new version is available",
       "restartHint": "Please close and reopen the app to apply the update.",
@@ -410,7 +420,7 @@
     "sshOk": "OK",
     "status.clean": "Clean",
     "status.dirty": "Dirty (multiple sshCommand blocks)",
-  "status.stale-sshcommand-on-https": "Stale SSH key on HTTPS (harmless)",
+    "status.stale-sshcommand-on-https": "Stale SSH key on HTTPS (harmless)",
     "status.no-config": "No .git/config",
     "status.no-identity": "No identity bound",
     "protocol": "Protocol",

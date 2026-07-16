@@ -734,6 +734,69 @@ mod tests {
             "protocol=https\nhost=git.example.com:8443\npath=team/repo.git\nusername=alice\npassword=secret-token\n\n"
         );
     }
+
+    #[test]
+    fn test_get_global_default_identity_id_round_trip() {
+        // The reader must reflect what `set_global_default_identity`
+        // last wrote, and `unset_global_default_identity` must drop
+        // it back to None. This pins the read/write/clear contract
+        // the frontend `useGlobalDefaultStore` relies on.
+        with_temp_home("global-default-roundtrip", || {
+            // Start empty.
+            let cfg0 = config_store::read().unwrap();
+            assert!(cfg0.global_default_identity_id.is_none());
+            assert_eq!(get_global_default_identity_id().unwrap(), None);
+
+            // Seed an identity and a key file.
+            let dir = crate::paths::ssh_dir().unwrap();
+            std::fs::create_dir_all(&dir).unwrap();
+            let key_path = dir.join("id_roundtrip");
+            std::fs::write(&key_path, "PRIVATE").unwrap();
+            std::fs::write(
+                &key_path.with_extension("pub"),
+                "ssh-ed25519 AAAA c\n",
+            )
+            .unwrap();
+
+            let mut cfg = config_store::read().unwrap();
+            let key_id = config_store::new_id();
+            let id_id = config_store::new_id();
+            cfg.ssh_keys.push(config_store::SshKey {
+                id: key_id.clone(),
+                name: "id_roundtrip".into(),
+                private_path: key_path.to_string_lossy().into(),
+                public_path: None,
+                key_type: None,
+                fingerprint: None,
+                comment: None,
+            });
+            cfg.identities.push(config_store::Identity {
+                id: id_id.clone(),
+                label: "roundtrip".into(),
+                user_name: "R".into(),
+                user_email: "r@x".into(),
+                ssh_key_id: Some(key_id),
+                match_path: None,
+                host_alias: None,
+                git_host: None,
+            });
+            config_store::write_snapshot(&cfg, "seed", "seed").unwrap();
+
+            // The reader still returns None until set.
+            assert_eq!(get_global_default_identity_id().unwrap(), None);
+
+            // Set it via the canonical command.
+            let _ = set_global_default_identity(id_id.clone()).unwrap();
+            assert_eq!(
+                get_global_default_identity_id().unwrap(),
+                Some(id_id.clone())
+            );
+
+            // Unset clears the pointer but leaves the rest alone.
+            unset_global_default_identity().unwrap();
+            assert_eq!(get_global_default_identity_id().unwrap(), None);
+        });
+    }
 }
 
 #[derive(serde::Serialize)]
@@ -751,6 +814,39 @@ pub struct GlobalGitConfig {
 /// a default identity in the "Add Project" dialog.
 #[tauri::command]
 pub fn get_global_git_config() -> Result<GlobalGitConfig> {
+    // Source-of-truth ordering:
+    // 1. If cfg.global_default_identity_id resolves to an existing
+    //    identity (i.e. the user used NiceSSH's "set as global default"
+    //    action at some point), derive user/email/ssh_key_path from
+    //    that identity. This is what the rest of the App treats as
+    //    "the default", and lets users see the right name even if
+    //    they hand-edited ~/.gitconfig afterwards.
+    // 2. Otherwise fall back to parsing the top-level ~/.gitconfig
+    //    file directly. This covers users who never used NiceSSH's
+    //    "set as global default" but still want the UI to reflect
+    //    their manual git setup.
+    if let Ok(cfg) = config_store::read() {
+        if let Some(id) = cfg.global_default_identity_id.clone() {
+            if let Some(identity) = cfg.identities.iter().find(|i| i.id == id) {
+                // Best-effort: missing key file should not crash the
+                // UI; we just leave ssh_key_path as None.
+                let key = cfg
+                    .ssh_keys
+                    .iter()
+                    .find(|k| Some(&k.id) == identity.ssh_key_id.as_ref())
+                    .map(|k| k.private_path.clone());
+                let gitconfig = paths::gitconfig_path()?;
+                let has_config = gitconfig.exists();
+                return Ok(GlobalGitConfig {
+                    has_config,
+                    user_name: Some(identity.user_name.clone()),
+                    user_email: Some(identity.user_email.clone()),
+                    ssh_key_path: key,
+                });
+            }
+        }
+    }
+
     let path = paths::gitconfig_path()?;
     if !path.exists() {
         return Ok(GlobalGitConfig {
@@ -818,6 +914,87 @@ pub struct GlobalGitConfigChange {
     pub ssh_key_path: String,
 }
 
+
+/// Set this identity as the global default. Writes BOTH the
+/// NiceSSH config record (`globalDefaultIdentityId`) AND the
+/// `~/.gitconfig` file so the next `git` invocation picks it up.
+/// Returns the derived user/email/ssh-key so the UI can show a
+/// confirmation toast.
+#[tauri::command]
+pub fn set_global_default_identity(identity_id: String) -> Result<GlobalGitConfigChange> {
+    // 1. Snapshot the identity we are about to push. Cloning it
+    //    frees up `cfg` for the later mutation in step 4.
+    let mut cfg = config_store::read()?;
+    let identity = cfg
+        .identities
+        .iter()
+        .find(|i| i.id == identity_id)
+        .cloned()
+        .ok_or_else(|| AppError::NotFound(format!("identity {}", identity_id)))?;
+
+    let path = paths::gitconfig_path()?;
+    let before = if path.exists() {
+        std::fs::read_to_string(&path)?
+    } else {
+        String::new()
+    };
+    let private_path = config_store::identity_private_path(&cfg, &identity)?;
+    let new_raw = splice::rewrite_global_defaults(&before, &identity, &private_path);
+
+    crate::history::commit_change(
+        "set_global_default_identity",
+        &format!("Set global default to identity {}", identity.label),
+        std::iter::once((
+            path.to_string_lossy().to_string(),
+            crate::history::FileChange {
+                before: before.clone(),
+                after: new_raw.clone(),
+            },
+        ))
+        .collect(),
+    )?;
+    crate::fs_safety::atomic_write(&path, &new_raw, 0o644)?;
+
+    // 2. Persist the id in the NiceSSH config so the UI can
+    //    surface "this is your global default" without re-parsing
+    //    ~/.gitconfig every render. Skip the write when the value
+    //    is already correct to avoid spurious history entries.
+    if cfg.global_default_identity_id.as_deref() != Some(identity_id.as_str()) {
+        cfg.global_default_identity_id = Some(identity_id.clone());
+        config_store::write_snapshot(
+            &cfg,
+            "set_global_default_identity",
+            &format!("Recorded global default identity {}", identity.label),
+        )?;
+    }
+
+    let full_key = config_store::identity_private_path(&cfg, &identity)?;
+    Ok(GlobalGitConfigChange {
+        user_name: identity.user_name.clone(),
+        user_email: identity.user_email.clone(),
+        ssh_key_path: full_key,
+    })
+}
+
+/// Clear any recorded global default. The actual `~/.gitconfig`
+/// file is left as-is — we only drop the advisory pointer so the
+/// UI stops claiming a default. (If we rewrote `~/.gitconfig` here
+/// we'd be silently undoing whatever the user may have typed by
+/// hand.)
+#[tauri::command]
+pub fn unset_global_default_identity() -> Result<()> {
+    let mut cfg = config_store::read()?;
+    if cfg.global_default_identity_id.is_some() {
+        cfg.global_default_identity_id = None;
+        config_store::write_snapshot(
+            &cfg,
+            "unset_global_default_identity",
+            "Cleared global default identity pointer",
+        )?;
+    }
+    Ok(())
+}
+
 #[tauri::command]
 pub fn set_global_git_config(identity_id: String) -> Result<GlobalGitConfigChange> {
     let cfg = config_store::read()?;
@@ -857,6 +1034,19 @@ pub fn set_global_git_config(identity_id: String) -> Result<GlobalGitConfigChang
         ssh_key_path: full_key,
     })
 }
+
+/// Read the advisory `globalDefaultIdentityId` from NiceSSH's
+/// config store. Returns `None` when the user has never set a
+/// default, or when the pointer was cleared via
+/// `unset_global_default_identity`. Note: this is *advisory*
+/// only — the source of truth for `git` is still `~/.gitconfig`,
+/// which the user can edit by hand.
+#[tauri::command]
+pub fn get_global_default_identity_id() -> Result<Option<String>> {
+    let cfg = config_store::read()?;
+    Ok(cfg.global_default_identity_id)
+}
+
 
 /// Thin-shell IPC command. See [`crate::git::ops::status`] for the
 /// actual logic. Returns a [`crate::git::ops::RepoStatus`] snapshot

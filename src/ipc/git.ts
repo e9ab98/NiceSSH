@@ -135,3 +135,24 @@ export interface GlobalGitConfigChange {
 
 export const setGlobalGitConfig = (identityId: string) =>
   ipc<GlobalGitConfigChange>('set_global_git_config', { identityId });
+
+// --- Global default identity (advisory pointer in cfg) ---
+//
+// These back the `useGlobalDefaultStore`. `setGlobalGitConfig`
+// remains the lower-level call that only rewrites `~/.gitconfig`;
+// the new pair additionally records `globalDefaultIdentityId` in
+// the NiceSSH config store so the UI can show "this is the
+// global default" without re-parsing `~/.gitconfig` every render.
+// `setGlobalDefaultIdentity` does both writes for callers that
+// want the full "make this the global default" action in one
+// round-trip; `unsetGlobalDefaultIdentity` clears the pointer but
+// leaves `~/.gitconfig` untouched (see Rust doc-comment for the
+// reason — never silently undo a user's hand-edits).
+export const getGlobalDefaultIdentityId = () =>
+  ipc<string | null>('get_global_default_identity_id');
+
+export const setGlobalDefaultIdentity = (identityId: string) =>
+  ipc<GlobalGitConfigChange>('set_global_default_identity', { identityId });
+
+export const unsetGlobalDefaultIdentity = () =>
+  ipc<void>('unset_global_default_identity');

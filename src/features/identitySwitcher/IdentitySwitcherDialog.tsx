@@ -5,15 +5,11 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '
 import { Button } from '../../components/ui/button';
 import { Input, Label } from '../../components/ui/input';
 import { Badge } from '../../components/ui/badge';
-import { Tabs, TabsList, TabsTrigger } from '../../components/ui/tabs';
-import { setGlobalGitConfig, getGlobalGitConfig } from '../../ipc/git';
 import { updateIdentity } from '../../ipc/identities';
 import { toast } from 'sonner';
 import { cn } from '../../lib/utils';
 import type { Identity } from '../../ipc/identities';
 import { useKeysStore, useIdentitiesStore } from '../../store/identities';
-
-type Scope = 'project' | 'global';
 
 interface Props {
   open: boolean;
@@ -65,9 +61,7 @@ export function computeMatchPathSeed(
 
 export function IdentitySwitcherDialog({ open, onOpenChange, identities, currentId, projectPath, onSelect }: Props) {
   const { t } = useTranslation();
-  const [scope, setScope] = useState<Scope>('project');
   const [busy, setBusy] = useState(false);
-  const [globalIdentityId, setGlobalIdentityId] = useState<string | null>(null);
   // The match path input mirrors `currentId`'s identity.matchPath when
   // the dialog opens so the user can edit it before confirming the bind.
   // We store it as raw user input (not normalized) and only normalize
@@ -76,37 +70,21 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
   const keys = useKeysStore((s) => s.items);
   const refreshKeys = useKeysStore((s) => s.refresh);
 
-  // When the dialog opens, fetch the current global identity so we
-  // can highlight it in the list under "Global" scope. Also seed the
-  // matchPath input from the currently-bound identity (or project
-  // path). The effect deliberately does NOT depend on `identities`
-  // or `keys` directly: both come from zustand stores that replace
-  // their items array on every refresh, so depending on them would
-  // cause this effect to re-fire on every store update and trigger
-  // an unbounded refresh -> set -> re-render loop that pegs the
+  // The dialog now only handles the *project* scope: the global
+  // default is set in the Identities view via GlobalDefaultSection.
+  // We still seed the matchPath input from the currently-bound
+  // identity's matchPath, falling back to the project path. The
+  // effect deliberately does NOT depend on `identities` or `keys`
+  // directly: both come from zustand stores that replace their
+  // items array on every refresh, so depending on them would cause
+  // this effect to re-fire on every store update and trigger an
+  // unbounded refresh -> set -> re-render loop that pegs the
   // webview CPU (the original cause of the white-screen crash).
   useEffect(() => {
     if (!open) return;
-    let cancelled = false;
-    (async () => {
-      try {
-        const cfg = await getGlobalGitConfig();
-        if (cancelled || !cfg.sshKeyPath) return;
-        const ids = useIdentitiesStore.getState().items;
-        const ks = useKeysStore.getState().items;
-        const match = ids.find((i) => ks.find((key) => key.id === i.sshKeyId)?.privatePath === cfg.sshKeyPath);
-        if (match) setGlobalIdentityId(match.id);
-      } catch {
-        // ignore — best-effort
-      }
-    })();
-    // Seed the match path input from the currently-bound identity's
-    // matchPath, or fall back to the project's own path. Read
-    // straight from the store so this effect's deps stay small.
-    const ids = useIdentitiesStore.getState().items;
-    const current = ids.find((i) => i.id === currentId);
+    // Read straight from the store so this effect's deps stay small.
+    const current = useIdentitiesStore.getState().items.find((i) => i.id === currentId);
     setMatchPathInput(computeMatchPathSeed(current?.matchPath, projectPath));
-    return () => { cancelled = true; };
     void refreshKeys();
   }, [open, currentId, projectPath, refreshKeys]);
 
@@ -114,41 +92,26 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
     if (busy) return;
     setBusy(true);
     try {
-      if (scope === 'project') {
-        // Persist the matchPath back to the identity *before* applying
-        // it, so applyIdentityToRepo can read the latest value.
-        const current = identities.find((i) => i.id === id);
-        const normalized = matchPathInput.trim() || null;
-        if (current && (current.matchPath ?? null) !== normalized) {
-          try {
-            const updated = await updateIdentity(id, { ...current, matchPath: normalized });
-            // Reflect locally so handleSelect's onSelect sees the new value
-            // and so the list re-renders. (The store will refresh on the
-            // caller's next listIdentities.)
-            current.matchPath = normalized;
-            // Surface the change in case the caller doesn't toast it.
-            toast.success(t('identitySwitcher.matchPathUpdated'));
-            // Use the updated identity in case the parent cares
-            void updated;
-          } catch (e) {
-            toast.error(String(e));
-            return; // don't proceed with applyIdentityToRepo if the write failed
-          }
+      const current = identities.find((i) => i.id === id);
+      const normalized = matchPathInput.trim() || null;
+      if (current && (current.matchPath ?? null) !== normalized) {
+        try {
+          const updated = await updateIdentity(id, { ...current, matchPath: normalized });
+          // Reflect locally so handleSelect's onSelect sees the new value
+          // and so the list re-renders. (The store will refresh on the
+          // caller's next listIdentities.)
+          current.matchPath = normalized;
+          // Surface the change in case the caller doesn't toast it.
+          toast.success(t('identitySwitcher.matchPathUpdated'));
+          // Use the updated identity in case the parent cares
+          void updated;
+        } catch (e) {
+          toast.error(String(e));
+          return; // don't proceed with applyIdentityToRepo if the write failed
         }
-        await onSelect(id);
-        onOpenChange(false);
-      } else {
-        const result = await setGlobalGitConfig(id);
-        const target = identities.find((i) => i.id === id);
-        toast.success(
-          t('identitySwitcher.globalApplied', {
-            label: target?.label ?? '',
-            email: result.userEmail,
-          })
-        );
-        setGlobalIdentityId(id);
-        onOpenChange(false);
       }
+      await onSelect(id);
+      onOpenChange(false);
     } catch (e) {
       toast.error(String(e));
     } finally {
@@ -178,44 +141,33 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
       <DialogContent className="max-w-md">
         <DialogHeader><DialogTitle>{t('identitySwitcher.title')}</DialogTitle></DialogHeader>
 
-        <Tabs value={scope} onValueChange={(v) => setScope(v as Scope)}>
-          <TabsList className="w-full grid grid-cols-2">
-            <TabsTrigger value="project">{t('identitySwitcher.scope.project')}</TabsTrigger>
-            <TabsTrigger value="global">{t('identitySwitcher.scope.global')}</TabsTrigger>
-          </TabsList>
-        </Tabs>
-
         <p className="text-xs text-text-1 -mt-1">
-          {scope === 'project'
-            ? t('identitySwitcher.scopeHint.project')
-            : t('identitySwitcher.scopeHint.global')}
+          {t('identitySwitcher.scopeHint.project')}
         </p>
 
-        {scope === 'project' && (
-          <div className="space-y-1">
-            <Label htmlFor="matchPath">{t('identitySwitcher.matchPathLabel')}</Label>
-            <div className="flex gap-2">
-              <Input
-                id="matchPath"
-                value={matchPathInput}
-                onChange={(e) => setMatchPathInput(e.target.value)}
-                placeholder={t('identitySwitcher.matchPathPlaceholder')}
-                className="flex-1"
-              />
-              <Button type="button" variant="outline" onClick={browseMatchDir}>
-                {t('identitySwitcher.matchPathBrowse')}
-              </Button>
-            </div>
-            <div className="text-text-2 text-xs">{t('identitySwitcher.matchPathHint')}</div>
+        <div className="space-y-1">
+          <Label htmlFor="matchPath">{t('identitySwitcher.matchPathLabel')}</Label>
+          <div className="flex gap-2">
+            <Input
+              id="matchPath"
+              value={matchPathInput}
+              onChange={(e) => setMatchPathInput(e.target.value)}
+              placeholder={t('identitySwitcher.matchPathPlaceholder')}
+              className="flex-1"
+            />
+            <Button type="button" variant="outline" onClick={browseMatchDir}>
+              {t('identitySwitcher.matchPathBrowse')}
+            </Button>
           </div>
-        )}
+          <div className="text-text-2 text-xs">{t('identitySwitcher.matchPathHint')}</div>
+        </div>
 
         <div className="space-y-2 max-h-[40vh] overflow-y-auto">
           {identities.length === 0 && (
             <div className="text-text-1 text-sm py-4 text-center">{t('identitySwitcher.empty')}</div>
           )}
           {identities.map((id) => {
-            const isCurrent = scope === 'project' ? id.id === currentId : id.id === globalIdentityId;
+            const isCurrent = id.id === currentId;
             return (
               <button
                 key={id.id}
