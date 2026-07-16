@@ -6,6 +6,7 @@ use crate::ssh_keys;
 #[derive(serde::Serialize)]
 #[serde(rename_all = "camelCase")]
 pub struct GeneratedKey {
+    pub id: String,
     pub private_path: String,
     pub public_key: String,
     pub fingerprint: String,
@@ -16,6 +17,7 @@ pub struct GeneratedKey {
 /// generating a new key with the same name.
 #[tauri::command]
 pub fn ssh_key_exists(name: String) -> Result<bool> {
+    ssh_keys::validate_key_name(&name)?;
     let path = paths::ssh_dir()?.join(&name);
     Ok(path.exists())
 }
@@ -26,6 +28,59 @@ pub fn list_keys() -> Result<Vec<ssh_keys::SshKey>> {
 }
 
 #[tauri::command]
+pub fn import_key(private_path: String) -> Result<crate::config_store::SshKey> {
+    let path = paths::expand_home(&private_path);
+    if !path.is_absolute() || !path.exists() {
+        return Err(AppError::NotFound(format!("SSH key {}", private_path)));
+    }
+    let path_string = path.to_string_lossy().to_string();
+    let mut cfg = crate::config_store::read()?;
+    if let Some(existing) = cfg.ssh_keys.iter().find(|key| {
+        paths::expand_home(&key.private_path) == path
+    }).cloned() {
+        return Ok(existing);
+    }
+    let name = path.file_name().and_then(|value| value.to_str()).unwrap_or("imported-key").to_string();
+    let public_path = path.with_extension("pub");
+    let key = crate::config_store::SshKey {
+        id: uuid::Uuid::new_v4().to_string(),
+        name,
+        private_path: path_string.clone(),
+        public_path: public_path.exists().then(|| public_path.to_string_lossy().to_string()),
+        key_type: None,
+        fingerprint: None,
+        comment: None,
+    };
+    cfg.ssh_keys.push(key.clone());
+    // Repair any orphan identities that used to point at this
+    // key by its previous (now-deleted) uuid.
+    if crate::config_store::rebind_orphan_identities_after_import(&mut cfg, &key) {
+        crate::config_store::write_snapshot(&cfg, "import_key_rebind", &format!("Imported SSH key {} (also re-bound orphan identities)", path_string))?;
+        return Ok(key);
+    }
+    crate::config_store::write_snapshot(&cfg, "import_key", &format!("Imported SSH key {}", path_string))?;
+    Ok(key)
+}
+
+#[cfg(test)]
+mod import_tests {
+    use super::*;
+
+    #[test]
+    fn import_key_reuses_existing_record() {
+        crate::test_helpers::with_temp_home("import-key", || {
+            let path = crate::paths::ssh_dir().unwrap().join("id_import");
+            std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+            std::fs::write(&path, "private").unwrap();
+            let first = import_key(path.to_string_lossy().to_string()).unwrap();
+            let second = import_key(path.to_string_lossy().to_string()).unwrap();
+            assert_eq!(first.id, second.id);
+            assert_eq!(crate::config_store::read().unwrap().ssh_keys.len(), 1);
+        });
+    }
+}
+
+#[tauri::command]
 pub fn generate_key(
     name: String,
     key_type: String,
@@ -33,6 +88,10 @@ pub fn generate_key(
     passphrase: Option<String>,
     dir: Option<String>,
 ) -> Result<GeneratedKey> {
+    ssh_keys::validate_key_name(&name)?;
+    if key_type != "ed25519" && key_type != "rsa" {
+        return Err(AppError::Validation(format!("unsupported SSH key type: {key_type}")));
+    }
     // Resolve the target directory. When `dir` is None or empty, fall
     // back to ~/.ssh/ for backwards compatibility with existing
     // callers. When the caller supplies a custom directory, it must
@@ -62,9 +121,9 @@ pub fn generate_key(
 
     let args: Vec<String> = vec![
         "-t".into(),
-        key_type,
+        key_type.clone(),
         "-C".into(),
-        comment,
+        comment.clone(),
         "-f".into(),
         private_path.to_string_lossy().to_string(),
         "-N".into(),
@@ -90,7 +149,21 @@ pub fn generate_key(
         &["-lf", public_path.to_str().unwrap_or("")],
     )?;
     let fp_line = fp.stdout.lines().next().unwrap_or("").to_string();
+    let id = uuid::Uuid::new_v4().to_string();
+    if let Ok(mut cfg) = crate::config_store::read() {
+        cfg.ssh_keys.push(crate::config_store::SshKey {
+            id: id.clone(),
+            name: name.clone(),
+            private_path: private_path.to_string_lossy().to_string(),
+            public_path: Some(public_path.to_string_lossy().to_string()),
+            key_type: Some(key_type),
+            fingerprint: Some(fp_line.clone()),
+            comment: Some(comment),
+        });
+        crate::config_store::write_snapshot(&cfg, "generate_key", &format!("Generated SSH key {}", name))?;
+    }
     Ok(GeneratedKey {
+        id,
         private_path: private_path.to_string_lossy().to_string(),
         public_key: public_key.trim().to_string(),
         fingerprint: fp_line,
@@ -104,6 +177,7 @@ pub fn delete_key(name: String) -> Result<()> {
 
 #[tauri::command]
 pub fn get_public_key(name: String) -> Result<String> {
+    ssh_keys::validate_key_name(&name)?;
     let path = paths::ssh_dir()?.join(format!("{}.pub", name));
     if !path.exists() {
         return Err(AppError::NotFound(format!("public key for {}", name)));
@@ -117,6 +191,7 @@ pub fn copy_public_key_to_clipboard(
     name: String,
 ) -> Result<String> {
     use tauri_plugin_clipboard_manager::ClipboardExt;
+    ssh_keys::validate_key_name(&name)?;
     let path = paths::ssh_dir()?.join(format!("{}.pub", name));
     if !path.exists() {
         return Err(AppError::NotFound(format!("public key for {}", name)));

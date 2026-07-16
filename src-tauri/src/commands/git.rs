@@ -328,7 +328,7 @@ pub fn test_ssh_connection(identity_id: String) -> Result<SshTestResult> {
         .find(|i| i.id == identity_id)
         .ok_or_else(|| AppError::NotFound(format!("identity {}", identity_id)))?;
     let host = identity.git_host.as_deref().unwrap_or("github.com");
-    let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
+    let full_key = config_store::identity_private_path(&cfg, identity)?;
     let key_path = paths::expand_home(&full_key);
     let key_str = key_path.to_string_lossy();
     let args = [
@@ -833,7 +833,8 @@ pub fn set_global_git_config(identity_id: String) -> Result<GlobalGitConfigChang
     } else {
         String::new()
     };
-    let new_raw = splice::rewrite_global_defaults(&before, identity);
+    let private_path = config_store::identity_private_path(&cfg, identity)?;
+    let new_raw = splice::rewrite_global_defaults(&before, identity, &private_path);
 
     crate::history::commit_change(
         "set_global_git_config",
@@ -849,7 +850,7 @@ pub fn set_global_git_config(identity_id: String) -> Result<GlobalGitConfigChang
     )?;
     crate::fs_safety::atomic_write(&path, &new_raw, 0o644)?;
 
-    let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
+    let full_key = config_store::identity_private_path(&cfg, identity)?;
     Ok(GlobalGitConfigChange {
         user_name: identity.user_name.clone(),
         user_email: identity.user_email.clone(),

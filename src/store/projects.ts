@@ -4,6 +4,7 @@ import { Project, listProjects, addProject as apiAdd, removeProject as apiRemove
 interface State {
   items: Project[];
   loading: boolean;
+  error: string | null;
   refresh: () => Promise<void>;
   add: (p: { name: string; path: string; identityId: string | null }) => Promise<Project>;
   remove: (id: string) => Promise<void>;
@@ -13,10 +14,18 @@ interface State {
 export const useProjectsStore = create<State>((set) => ({
   items: [],
   loading: false,
+  error: null,
   refresh: async () => {
-    set({ loading: true });
-    const items = await listProjects();
-    set({ items, loading: false });
+    set({ loading: true, error: null });
+    try {
+      const items = await listProjects();
+      set({ items });
+    } catch (error) {
+      set({ error: error instanceof Error ? error.message : String(error) });
+      throw error;
+    } finally {
+      set({ loading: false });
+    }
   },
   add: async (p) => {
     const created = await apiAdd(p);

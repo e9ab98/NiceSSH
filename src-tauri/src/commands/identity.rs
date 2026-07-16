@@ -13,7 +13,7 @@ pub fn create_identity(
     label: String,
     user_name: String,
     user_email: String,
-    key_path: String,
+    ssh_key_id: Option<String>,
     match_path: Option<String>,
     host_alias: Option<String>,
     git_host: Option<String>,
@@ -25,7 +25,7 @@ pub fn create_identity(
         label,
         user_name,
         user_email,
-        key_path,
+        ssh_key_id,
         match_path,
         host_alias,
         git_host,
@@ -58,7 +58,7 @@ pub fn update_identity(id: String, updated: Identity) -> Result<Identity> {
 /// Delete an identity from the NiceSSH config store.
 ///
 /// When `delete_files` is true, also remove the SSH key pair on disk
-/// referenced by `identity.key_path`. The key file must live under
+/// referenced by the identity's associated SSH key. The key file must live under
 /// `~/.ssh/` — any other path is rejected so we never accidentally
 /// delete files outside the user's SSH directory.
 #[tauri::command]
@@ -75,10 +75,13 @@ pub fn delete_identity(id: String, delete_files: Option<bool>) -> Result<()> {
     // If the caller asked to also remove the key file, resolve and
     // validate the path *before* mutating the config store. That way
     // a rejected deletion leaves the identity record intact.
-    let resolved_key = if delete_files && !target.key_path.trim().is_empty() {
+    let resolved_key = if delete_files {
         // Resolve the full private-key path (key_path may be either a
         // directory + label, or a legacy full file path).
-        let full = paths::resolve_key_path(&target.key_path, &target.label);
+        let full = match config_store::identity_private_path(&cfg, &target) {
+            Ok(path) => path,
+            Err(_) => String::new(),
+        };
         if full.trim().is_empty() {
             None
         } else {
@@ -164,12 +167,14 @@ mod tests {
 
         let mut cfg = config_store::read().unwrap_or_default();
         let id = config_store::new_id();
+        let key_id = config_store::new_id();
+        cfg.ssh_keys.push(config_store::SshKey { id: key_id.clone(), name: key_basename.into(), private_path: priv_path.to_string_lossy().into(), public_path: Some(pub_path.to_string_lossy().into()), key_type: None, fingerprint: None, comment: None });
         cfg.identities.push(Identity {
             id: id.clone(),
             label: "test".into(),
             user_name: "u".into(),
             user_email: "u@e".into(),
-            key_path: priv_path.to_string_lossy().to_string(),
+            ssh_key_id: Some(key_id),
             match_path: None,
             host_alias: Some("github.com".into()),
             git_host: None,
@@ -243,12 +248,14 @@ mod tests {
             let mut cfg = config_store::read().unwrap_or_default();
             let id = config_store::new_id();
             let outside = std::env::temp_dir().join("nicessh-test-outside.key");
+            let key_id = config_store::new_id();
+            cfg.ssh_keys.push(config_store::SshKey { id: key_id.clone(), name: "outside".into(), private_path: outside.to_string_lossy().into(), public_path: None, key_type: None, fingerprint: None, comment: None });
             cfg.identities.push(Identity {
                 id: id.clone(),
                 label: "evil".into(),
                 user_name: "u".into(),
                 user_email: "u@e".into(),
-                key_path: outside.to_string_lossy().to_string(),
+                ssh_key_id: Some(key_id),
                 match_path: None,
                 host_alias: None,
                 git_host: None,
@@ -285,12 +292,14 @@ mod tests {
 
             let mut cfg = config_store::read().unwrap_or_default();
             let id = config_store::new_id();
+            let key_id = config_store::new_id();
+            cfg.ssh_keys.push(config_store::SshKey { id: key_id.clone(), name: "id_work".into(), private_path: priv_path.to_string_lossy().into(), public_path: Some(pub_path.to_string_lossy().into()), key_type: None, fingerprint: None, comment: None });
             cfg.identities.push(Identity {
                 id: id.clone(),
                 label: "id_work".into(),
                 user_name: "u".into(),
                 user_email: "u@e".into(),
-                key_path: sub.to_string_lossy().to_string(),
+                ssh_key_id: Some(key_id),
                 match_path: None,
                 host_alias: None,
                 git_host: None,
@@ -316,7 +325,7 @@ mod tests {
                 label: "no-key".into(),
                 user_name: "u".into(),
                 user_email: "u@e".into(),
-                key_path: "".into(),
+                ssh_key_id: None,
                 match_path: None,
                 host_alias: None,
                 git_host: None,

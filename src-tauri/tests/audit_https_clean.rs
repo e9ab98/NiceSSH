@@ -30,11 +30,12 @@ fn appconfig_current_version_serializes() {
             label: "work".into(),
             user_name: "Alice".into(),
             user_email: "a@x".into(),
-            key_path: "~/.ssh/id_work".into(),
+            ssh_key_id: None,
             match_path: None,
             host_alias: None,
             git_host: None,
         }],
+        ssh_keys: Vec::new(),
         projects: vec![Project {
             id: "p1".into(),
             name: "test".into(),

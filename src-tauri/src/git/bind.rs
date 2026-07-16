@@ -103,7 +103,7 @@ pub fn apply_identity_to_repo(project_id: String, identity_id: String) -> Result
                 git_config::append_include_if(match_path, &identity.label)?;
             }
         }
-        let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
+        let full_key = config_store::identity_private_path(&cfg, identity)?;
         match outcome {
             BindOutcome::SshStyle => git_config::write_identity_subfile(
                 &identity.label,
@@ -177,7 +177,7 @@ mod bind_tests {
             label: label.into(),
             user_name: name.into(),
             user_email: email.into(),
-            key_path: key.into(),
+            ssh_key_id: Some(format!("key_{label}")),
             match_path: None,
             host_alias: None,
             git_host: None,
@@ -197,6 +197,11 @@ mod bind_tests {
             version: CURRENT_VERSION,
             theme: "system".into(),
             identities: identities.to_vec(),
+            ssh_keys: identities.iter().map(|identity| crate::config_store::SshKey {
+                id: identity.ssh_key_id.clone().unwrap(), name: identity.label.clone(),
+                private_path: format!("~/.ssh/{}", identity.label), public_path: None,
+                key_type: None, fingerprint: None, comment: None,
+            }).collect(),
             projects: projects.iter().map(|(id, path)| Project {
                 id: id.clone(),
                 name: std::path::Path::new(path).file_name().and_then(|s| s.to_str()).unwrap_or("repo").to_string(),
@@ -231,7 +236,7 @@ mod bind_tests {
             assert!(after.contains("email = new@x"), "got:\n{after}");
             assert!(!after.contains("name = Old"), "old name leaked:\n{after}");
             assert!(!after.contains("ssh -i ~/.ssh/old"), "old sshCommand leaked:\n{after}");
-            assert!(after.contains("id_new"), "new sshCommand should reference id_new, got:\n{after}");
+            assert!(after.contains("~/.ssh/new"), "new sshCommand should reference the bound key, got:\n{after}");
         });
     }
 

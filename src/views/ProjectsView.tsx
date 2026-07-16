@@ -7,7 +7,7 @@ import { Badge } from '../components/ui/badge';
 import { ProtocolBadge } from '../components/protocolBadge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip';
 import { useProjectsStore } from '../store/projects';
-import { useIdentitiesStore } from '../store/identities';
+import { useIdentitiesStore, useKeysStore, type SshKeyInfo } from '../store/identities';
 import { useSettingsStore } from '../store/settings';
 import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, getGlobalGitConfig, gitStatus, initRepo, isGitRepo, setGlobalGitConfig, type RepoGitConfig, type GlobalGitConfig, type RepoStatus } from '../ipc/git';
 import { tryUnlockKey, isKeyEncrypted } from '../ipc/sshAdd';
@@ -24,7 +24,8 @@ import { ContextMenu } from '../components/ContextMenu';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import type { Identity } from '../ipc/identities';
-import { fullKeyPath } from '../lib/keyPath';
+// SshKeyInfo type re-exported via identities store
+// (no direct ipc import needed here)
 
 type DetectedIdentity =
   | { kind: 'none' }
@@ -35,13 +36,14 @@ function detectIdentity(
   project: { id: string; name: string; path: string; identityId: string | null },
   identities: Identity[],
   repoConfig: RepoGitConfig | null,
+  keys: SshKeyInfo[],
 ): DetectedIdentity {
   if (project.identityId) {
     const found = identities.find((i) => i.id === project.identityId);
     if (found) return { kind: 'tracked', identity: found, source: 'config' };
   }
   if (repoConfig?.sshKeyPath) {
-    const match = identities.find((i) => fullKeyPath(i) === repoConfig.sshKeyPath);
+    const match = identities.find((i) => keys.find((key) => key.id === i.sshKeyId)?.privatePath === repoConfig.sshKeyPath);
     if (match) return { kind: 'tracked', identity: match, source: 'git' };
     return { kind: 'untracked', keyPath: repoConfig.sshKeyPath };
   }
@@ -97,6 +99,8 @@ export function ProjectsView() {
   const { t } = useTranslation();
   const projects = useProjectsStore((s) => s.items);
   const refreshProjects = useProjectsStore((s) => s.refresh);
+  const keys = useKeysStore((s) => s.items);
+  const refreshKeys = useKeysStore((s) => s.refresh);
   const add = useProjectsStore((s) => s.add);
   const remove = useProjectsStore((s) => s.remove);
   const assign = useProjectsStore((s) => s.assign);
@@ -104,6 +108,7 @@ export function ProjectsView() {
   const refreshIdentities = useIdentitiesStore((s) => s.refresh);
   const markKeyUnlocked = useSettingsStore((s) => s.markKeyUnlocked);
   const recentlyUnlocked = useSettingsStore((s) => s.recentlyUnlockedKeys);
+  const privatePathFor = (identity: Identity) => keys.find((key) => key.id === identity.sshKeyId)?.privatePath ?? '';
 
   const [selectedId, setSelectedId] = useState<string | null>(null);
   const [switcherOpen, setSwitcherOpen] = useState(false);
@@ -166,7 +171,11 @@ export function ProjectsView() {
   useEffect(() => { void refreshIsRepo(); }, [refreshIsRepo]);
 
 
-  useEffect(() => { refreshProjects(); refreshIdentities(); }, []);
+  useEffect(() => {
+    refreshProjects();
+    refreshIdentities();
+    void refreshKeys();
+  }, [refreshKeys]);
 
   useEffect(() => {
     getGlobalGitConfig().then(setGlobalGit).catch(() => setGlobalGit(null));
@@ -194,20 +203,27 @@ export function ProjectsView() {
   // change — git status is cheap, but porcelain parsing is
   // still O(files), and the left list view does not need
   // per-row status yet.
+  // Pull the status deps into local primitives so the
+  // `useCallback` doesn't re-create `refreshStatus` on every
+  // render. Without this, `useEffect([refreshStatus])` would
+  // re-fire endlessly and burn the webview CPU on every project
+  // store update.
+  const selectedPath = selected?.path ?? null;
+  const selectedIsRepo = selected ? isRepoMap[selected.id] : undefined;
   const refreshStatus = useCallback(async () => {
-    if (!selected) { setStatusForSelected(null); return; }
-    if (isRepoMap[selected.id] === false) { setStatusForSelected(null); return; }
+    if (!selectedPath) { setStatusForSelected(null); return; }
+    if (selectedIsRepo === false) { setStatusForSelected(null); return; }
     try {
-      const s = await gitStatus(selected.path);
+      const s = await gitStatus(selectedPath);
       setStatusForSelected(s);
     } catch {
       setStatusForSelected(null);
     }
-  }, [selected, isRepoMap]);
-  useEffect(() => { void refreshStatus(); }, [refreshStatus]);
+  }, [selectedPath, selectedIsRepo]);
+  useEffect(() => { void refreshStatus(); }, [refreshStatus, selectedId]);
 
   const repoConfig = selected ? (repoConfigs[selected.id] ?? null) : null;
-  const detected = selected ? detectIdentity(selected, identities, repoConfig) : { kind: 'none' as const };
+  const detected = selected ? detectIdentity(selected, identities, repoConfig, keys) : { kind: 'none' as const };
   const identity = detected.kind === 'tracked' ? detected.identity : null;
   const pendingIdentity = identities.find((i) => i.id === pendingIdentityId) ?? null;
 
@@ -216,7 +232,7 @@ export function ProjectsView() {
     let bound = 0, unbound = 0, errors = 0;
     for (const p of projects) {
       const cfg = repoConfigs[p.id];
-      const d = detectIdentity(p, identities, cfg ?? null);
+      const d = detectIdentity(p, identities, cfg ?? null, keys);
       if (d.kind === 'tracked') bound++;
       else unbound++;
     }
@@ -227,7 +243,7 @@ export function ProjectsView() {
 
   const defaultIdentityId = (() => {
     if (!globalGit?.sshKeyPath) return null;
-    const match = identities.find((i) => i.keyPath === globalGit.sshKeyPath);
+    const match = identities.find((i) => privatePathFor(i) === globalGit.sshKeyPath);
     return match?.id ?? null;
   })();
 
@@ -426,7 +442,12 @@ export function ProjectsView() {
     }
     const target = identities.find((i) => i.id === targetIdentityId);
     if (!target) return;
-    const fullKp = fullKeyPath(target); if (!recentlyUnlocked[fullKp]) {
+    const fullKp = privatePathFor(target);
+    if (!fullKp) {
+      toast.error(t('identities.noKeyBound'));
+      return;
+    }
+    if (!recentlyUnlocked[fullKp]) {
       setSwitcherOpen(false);
       const encrypted = await isKeyEncrypted(fullKp);
       if (!encrypted) {
@@ -447,9 +468,10 @@ export function ProjectsView() {
 
   const handleUnlock = async (passphrase: string): Promise<boolean> => {
     if (!pendingIdentity) return false;
-    const ok = await tryUnlockKey(fullKeyPath(pendingIdentity), passphrase);
+    const keyPath = privatePathFor(pendingIdentity);
+    const ok = await tryUnlockKey(keyPath, passphrase);
     if (ok) {
-      markKeyUnlocked(fullKeyPath(pendingIdentity));
+      markKeyUnlocked(keyPath);
       if (selected) {
         await performSwitch(pendingIdentity.id);
       }
@@ -532,7 +554,7 @@ export function ProjectsView() {
                 <ul className="p-1.5 flex flex-col gap-0.5">
                   {projects.map((p) => {
                     const cfg = repoConfigs[p.id] ?? null;
-                    const d = detectIdentity(p, identities, cfg);
+                    const d = detectIdentity(p, identities, cfg, keys);
                     return (
                       <li
                         key={p.id}
@@ -571,6 +593,11 @@ export function ProjectsView() {
             {selected ? (
               <ProjectDetail
                 project={selected}
+                keyPath={
+                  detected.kind === 'tracked'
+                    ? privatePathFor(detected.identity)
+                    : null
+                }
                 detected={detected}
                 hasIdentities={identities.length > 0}
                 repoConfig={repoConfig}
@@ -654,7 +681,7 @@ export function ProjectsView() {
           <PassphraseDialog
             open={passOpen}
             onOpenChange={(v) => { if (!v) setPendingIdentityId(null); }}
-            keyPath={fullKeyPath(pendingIdentity)}
+            keyPath={privatePathFor(pendingIdentity)}
             onUnlock={handleUnlock}
           />
         )}
@@ -731,9 +758,14 @@ export function ProjectsView() {
   );
 }
 
-function ProjectDetail({ project, detected, hasIdentities, repoConfig, isRepo, initializing, status, opsBusy, onInit, onCommit, onPull, onPush, onSwitch, onTest, onRemove, onSetAsGlobal, commits, setCommits }: {
+function ProjectDetail({ project, detected, keyPath, hasIdentities, repoConfig, isRepo, initializing, status, opsBusy, onInit, onCommit, onPull, onPush, onSwitch, onTest, onRemove, onSetAsGlobal, commits, setCommits }: {
   project: { id: string; name: string; path: string };
   detected: DetectedIdentity;
+  /// Full private-key path for the bound identity, pre-resolved
+  /// by the parent. We accept a plain string instead of the
+  /// identity + keys pair because ProjectDetail is a standalone
+  /// component (no closure over its parent's `privatePathFor`).
+  keyPath: string | null;
   hasIdentities: boolean;
   repoConfig: RepoGitConfig | null;
   /// Result of isGitRepo() for this project. `undefined` means the
@@ -859,7 +891,7 @@ function ProjectDetail({ project, detected, hasIdentities, repoConfig, isRepo, i
             <>
               <KV label={t('projects.detail.name')} value={identity.label} />
               <KV label={t('projects.detail.email')} value={identity.userEmail || '—'} mono />
-              {identity.keyPath && <KV label={t('projects.detail.key')} value={identity.keyPath} mono />}
+              {keyPath && <KV label={t('projects.detail.key')} value={keyPath} mono />}
               {identity.matchPath && <KV label={t('projects.match')} value={identity.matchPath} mono />}
             </>
           ) : untrackedKey ? (

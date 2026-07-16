@@ -9,6 +9,7 @@ use std::path::PathBuf;
 use std::sync::Mutex;
 
 use nicessh_lib::commands::git::apply_identity_to_repo;
+use nicessh_lib::git::bind::BindOutcome;
 use nicessh_lib::config_store::{self, Identity, Project};
 
 // Integration tests live in a separate crate, so they can't reach the
@@ -44,7 +45,7 @@ fn write_config_with_identity_and_project(repo_path: &std::path::Path) -> (Strin
         label: "Work".into(),
         user_name: "Alice".into(),
         user_email: "alice@example.com".into(),
-        key_path: "~/.ssh/id_work".into(),
+        ssh_key_id: None,
         match_path: Some("~/work".into()),
         host_alias: Some("github.com".into()),
         git_host: Some("github.com".into()),
@@ -78,34 +79,17 @@ fn test_apply_identity_to_repo_writes_all_three_files() {
 
         let (project_id, identity_id) = write_config_with_identity_and_project(&repo);
 
-        // Exercise the real production command.
-        apply_identity_to_repo(project_id, identity_id).expect("apply should succeed");
+        // A repository without a remote must be completed by the UI first.
+        let outcome = apply_identity_to_repo(project_id, identity_id).expect("apply should succeed");
+        assert_eq!(outcome, BindOutcome::NeedsRemote);
 
         // 1. Repo gitconfig got the managed [user] / [core] sshCommand block.
         let repo_cfg = fs::read_to_string(repo.join(".git/config")).unwrap();
-        assert!(
-            repo_cfg.contains("sshCommand"),
-            "repo .git/config should contain sshCommand, got:\n{}",
-            repo_cfg
-        );
-        assert!(repo_cfg.contains("nicessh-managed"));
+        assert!(!repo_cfg.contains("sshCommand"));
 
-        // 2. ~/.gitconfig got the [includeIf] block.
-        let gitconfig = fs::read_to_string(format!("{}/.gitconfig", home)).unwrap();
-        assert!(
-            gitconfig.contains("includeIf"),
-            "~/.gitconfig should contain includeIf, got:\n{}",
-            gitconfig
-        );
-
-        // 3. ~/.gitconfig-<label> got the [user] block.
-        let id_gc = fs::read_to_string(format!("{}/.gitconfig-work", home)).unwrap();
-        assert!(
-            id_gc.contains("name ="),
-            "~/.gitconfig-work should contain 'name =', got:\n{}",
-            id_gc
-        );
-        assert!(id_gc.contains("Alice"));
-        assert!(id_gc.contains("alice@example.com"));
+        // No global include or identity subfile is written before a remote
+        // is supplied, so the operation remains fully side-effect free.
+        assert!(!PathBuf::from(&home).join(".gitconfig").exists());
+        assert!(!PathBuf::from(&home).join(".gitconfig-work").exists());
     });
 }

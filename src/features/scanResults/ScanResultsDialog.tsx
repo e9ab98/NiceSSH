@@ -109,11 +109,16 @@ export function ScanResultsDialog({ open, onOpenChange, candidates, onImport }: 
                           className="shrink-0"
                         />
                         <span className="font-medium truncate">{c.label}</span>
-                        {c.provenance.kind === 'gitconfig_include_if' ? (
-                          <Badge variant="outline">{t('scanResults.fromGitconfig')}</Badge>
-                        ) : (
-                          <Badge variant="outline">{t('scanResults.fromSsh')}</Badge>
-                        )}
+                        {/* Each source contributes its own badge so a candidate
+                            backed by both gitconfig and ssh-orphan scanners
+                            shows two badges side-by-side. */}
+                        {(c.provenance.sources ?? []).map((src) => (
+                          <Badge key={src.kind} variant="outline">
+                            {src.kind === 'gitconfig_include_if'
+                              ? t('scanResults.fromGitconfig')
+                              : t('scanResults.fromSsh')}
+                          </Badge>
+                        ))}
                         {conflict && <Badge variant="warning">{t('scanResults.conflict')}</Badge>}
                       </div>
                     </div>

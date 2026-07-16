@@ -28,6 +28,9 @@ export function useUpdateCheck(): void {
           createElement(UpdateToast, { version: info.version, notes: info.notes }),
           { id: TOAST_ID, duration: Infinity }
         );
+      }).catch(() => {
+        // Update checks are best-effort and should never create an
+        // unhandled rejection or interrupt the first-run experience.
       });
     }, 5000);
 

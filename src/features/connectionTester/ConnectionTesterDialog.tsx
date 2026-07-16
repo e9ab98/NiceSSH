@@ -40,8 +40,8 @@ export function ConnectionTesterDialog({ open, onOpenChange, mode, projectPath, 
     setLoading(true);
     try {
       setResult(await testHttpsConnectionWithCredentials(projectPath, username, password));
-    } catch (error) {
-      setResult({ ok: false, message: String(error), timedOut: false, needsCredentials: false, credentialsSaved: false });
+    } catch {
+      setResult({ ok: false, message: 'Credential test failed.', timedOut: false, needsCredentials: false, credentialsSaved: false });
     } finally {
       setPassword('');
       setLoading(false);

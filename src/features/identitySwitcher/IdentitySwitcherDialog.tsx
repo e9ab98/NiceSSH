@@ -11,6 +11,7 @@ import { updateIdentity } from '../../ipc/identities';
 import { toast } from 'sonner';
 import { cn } from '../../lib/utils';
 import type { Identity } from '../../ipc/identities';
+import { useKeysStore, useIdentitiesStore } from '../../store/identities';
 
 type Scope = 'project' | 'global';
 
@@ -72,10 +73,18 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
   // We store it as raw user input (not normalized) and only normalize
   // at submit time.
   const [matchPathInput, setMatchPathInput] = useState<string>('');
+  const keys = useKeysStore((s) => s.items);
+  const refreshKeys = useKeysStore((s) => s.refresh);
 
-  // When the dialog opens, fetch the current global identity so we can
-  // highlight it in the list under "Global" scope. Also seed the
-  // matchPath input from the currently-bound identity (or project path).
+  // When the dialog opens, fetch the current global identity so we
+  // can highlight it in the list under "Global" scope. Also seed the
+  // matchPath input from the currently-bound identity (or project
+  // path). The effect deliberately does NOT depend on `identities`
+  // or `keys` directly: both come from zustand stores that replace
+  // their items array on every refresh, so depending on them would
+  // cause this effect to re-fire on every store update and trigger
+  // an unbounded refresh -> set -> re-render loop that pegs the
+  // webview CPU (the original cause of the white-screen crash).
   useEffect(() => {
     if (!open) return;
     let cancelled = false;
@@ -83,19 +92,23 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
       try {
         const cfg = await getGlobalGitConfig();
         if (cancelled || !cfg.sshKeyPath) return;
-        const match = identities.find((i) => i.keyPath === cfg.sshKeyPath);
+        const ids = useIdentitiesStore.getState().items;
+        const ks = useKeysStore.getState().items;
+        const match = ids.find((i) => ks.find((key) => key.id === i.sshKeyId)?.privatePath === cfg.sshKeyPath);
         if (match) setGlobalIdentityId(match.id);
       } catch {
         // ignore — best-effort
       }
     })();
     // Seed the match path input from the currently-bound identity's
-    // matchPath, or fall back to the project's own path. See
-    // `computeMatchPathSeed` for the rule.
-    const current = identities.find((i) => i.id === currentId);
+    // matchPath, or fall back to the project's own path. Read
+    // straight from the store so this effect's deps stay small.
+    const ids = useIdentitiesStore.getState().items;
+    const current = ids.find((i) => i.id === currentId);
     setMatchPathInput(computeMatchPathSeed(current?.matchPath, projectPath));
     return () => { cancelled = true; };
-  }, [open, currentId, identities, projectPath]);
+    void refreshKeys();
+  }, [open, currentId, projectPath, refreshKeys]);
 
   const handleSelect = async (id: string) => {
     if (busy) return;
@@ -220,7 +233,7 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
                   {isCurrent && <Badge variant="outline">{t('common.current')}</Badge>}
                 </div>
                 <div className="text-text-1 text-xs mt-1">{id.userEmail}</div>
-                <div className="text-text-2 text-xs mt-0.5 font-mono truncate">{id.keyPath || ''}</div>
+                <div className="text-text-2 text-xs mt-0.5 font-mono truncate">{keys.find((key) => key.id === id.sshKeyId)?.privatePath || t('identities.noKeyBound')}</div>
               </button>
             );
           })}

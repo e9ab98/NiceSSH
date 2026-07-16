@@ -139,7 +139,18 @@ export function SettingsUpdatesTab() {
   useEffect(() => {
     if (changelog) {
       try {
-        const html = marked.parse(changelog, { async: false }) as string;
+        const html = marked.parse(changelog, {
+          async: false,
+          headerIds: false,
+          mangle: false,
+          renderer: {
+            link({ href, title, text }) {
+              if (!href || !/^https?:\/\//i.test(href)) return text;
+              const safeTitle = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
+              return `<a href="${href}"${safeTitle} target="_blank" rel="noopener noreferrer">${text}</a>`;
+            },
+          },
+        }) as string;
         setParsedHtml(html);
       } catch (err) {
         console.error('Failed to parse markdown', err);

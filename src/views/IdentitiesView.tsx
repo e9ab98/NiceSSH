@@ -5,20 +5,27 @@ import { Card } from '../components/ui/card';
 import { Badge } from '../components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
-import { useIdentitiesStore } from '../store/identities';
+import { useIdentitiesStore, useKeysStore } from '../store/identities';
 import { IdentityFormDialog } from '../features/identityForm/IdentityFormDialog';
 import { KeyGeneratorDialog } from '../features/keyGenerator/KeyGeneratorDialog';
 import { ScanResultsDialog } from '../features/scanResults/ScanResultsDialog';
 import { scanExistingIdentities, type ScannedIdentity } from '../ipc/identities';
 import { toast } from 'sonner';
 import type { Identity } from '../ipc/identities';
-import { splitKeyPath } from '../lib/keyPath';
+import { importKey } from '../ipc/sshKeys';
+import { homeDir } from '@tauri-apps/api/path';
 
 type DeleteMode = 'record' | 'withFiles';
 
 export function IdentitiesView() {
   const { t } = useTranslation();
   const { items, loading, refresh, create, update, remove } = useIdentitiesStore();
+  // Read keys from the shared store so other views
+  // (Projects / IdentitySwitcher) see freshly imported keys
+  // without a full page reload.
+  const keys = useKeysStore((s) => s.items);
+  const refreshKeys = useKeysStore((s) => s.refresh);
+  const [home, setHome] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Identity | null>(null);
   const [genFor, setGenFor] = useState<Identity | null>(null);
@@ -31,7 +38,12 @@ export function IdentitiesView() {
   const [deleteMode, setDeleteMode] = useState<DeleteMode>('record');
   const [deleteBusy, setDeleteBusy] = useState(false);
 
-  useEffect(() => { refresh(); }, [refresh]);
+  useEffect(() => {
+    refresh();
+    void refreshKeys();
+    void homeDir().then(setHome).catch(() => setHome(''));
+  }, [refresh, refreshKeys]);
+  const keyById = (id: string | null) => keys.find((key) => key.id === id) ?? null;
 
   const runScan = async () => {
     if (scanning) return;
@@ -47,32 +59,63 @@ export function IdentitiesView() {
     }
   };
 
+  /**
+   * As a last-ditch fallback: when a scanned candidate has no
+   * `keyPath` (the backend should always backfill this, but
+   * guard anyway), look in the current `keys` state for a
+   * record whose `privatePath` basename matches `id_<label>`
+   * or `<label>`. Returns the absolute path of that record so
+   * `importKey` (which is a no-op for already-known keys) can
+   * still resolve the import. Mirrors the backend's
+   * `backfill_key_paths`.
+   */
+  async function guessKeyPathForLabel(label: string): Promise<string | null> {
+    const names = new Set([`id_${label}`, label]);
+    const match = keys.find((k) => {
+      const base = k.privatePath.split("/").pop();
+      return base !== undefined && names.has(base);
+    });
+    return match?.privatePath ?? null;
+  }
+
   const handleImport = async (selected: ScannedIdentity[]) => {
     let imported = 0;
     for (const c of selected) {
       // Skip anything that conflicts (defensive: UI already pre-deselects them)
       if (c.conflictsWithExisting || c.conflictsWithExistingKey) continue;
       try {
-        // Scanner returns the full private-key file path
-        // (e.g. `/Users/x/.ssh/id_work`). We store the *directory*
-        // portion as `keyPath` so the rest of the app can compose
-        // `<keyPath>/<label>` consistently. If the label came from the
-        // scanner already, use it as-is; otherwise fall back to the
-        // file basename via splitKeyPath.
-        const scannedPath = c.keyPath ?? '';
-        const { dir: importedDir, label: derivedLabel } = splitKeyPath(
-          scannedPath,
-          c.label,
-        );
+        // Defensive: after the backend's dedupe+backfill pass,
+        // `c.keyPath` should always be set. If it's still null
+        // (e.g. gitconfig label has no matching key file in
+        // ~/.ssh/), do NOT create an un-bound identity - that
+        // would show up as "未绑定 SSH 密钥". Skip with a
+        // warning toast instead.
+        let resolvedKeyPath = c.keyPath ?? null;
+        if (!resolvedKeyPath) {
+          const guessed = await guessKeyPathForLabel(c.label);
+          if (guessed) resolvedKeyPath = guessed;
+        }
+        const scannedKey = resolvedKeyPath
+          ? (keys.find((key) => normalizePath(key.privatePath) === normalizePath(resolvedKeyPath!)) ?? await importKey(resolvedKeyPath))
+          : null;
+        if (!scannedKey) {
+          toast.warning(
+            t('identities.scanNoKeyForLabel', { label: c.label }),
+          );
+          continue;
+        }
         await create({
-          label: c.label || derivedLabel,
+          label: c.label,
           userName: c.userName ?? '',
           userEmail: c.userEmail ?? '',
-          keyPath: importedDir,
+          sshKeyId: scannedKey.id,
           matchPath: c.matchPath,
           hostAlias: null,
           gitHost: null,
         });
+        // Make the freshly-imported record visible to all
+        // views (Projects / IdentitySwitcher) immediately.
+        await refreshKeys();
         imported++;
       } catch {
         // already toasted by ipc client
@@ -82,6 +125,10 @@ export function IdentitiesView() {
       toast.success(t('scanResults.scanSuccess_other', { count: imported }));
     }
   };
+
+  function normalizePath(value: string): string {
+    return value.replace(/\\/g, '/').replace(/^~\//, home ? `${home.replace(/\\/g, '/')}/` : '~/');
+  }
 
   const openDelete = (id: Identity) => {
     setDeleting(id);
@@ -97,7 +144,8 @@ export function IdentitiesView() {
     if (!deleting || deleteBusy) return;
     setDeleteBusy(true);
     const target = deleting;
-    const deleteFiles = deleteMode === 'withFiles' && target.keyPath.trim().length > 0;
+    const key = keyById(target.sshKeyId);
+    const deleteFiles = deleteMode === 'withFiles' && !!key;
     try {
       await remove(target.id, { deleteFiles });
       toast.success(
@@ -134,12 +182,16 @@ export function IdentitiesView() {
                     <Badge variant="outline">{id.hostAlias ?? 'github.com'}</Badge>
                   </div>
                   <div className="text-text-1 text-sm mt-1">{id.userName} &lt;{id.userEmail}&gt;</div>
-                  <Tooltip>
-                    <TooltipTrigger asChild>
-                      <div className="text-text-2 text-xs mt-1 font-mono truncate max-w-md">{id.keyPath || ''}</div>
-                    </TooltipTrigger>
-                    <TooltipContent>{id.keyPath || ''}</TooltipContent>
-                  </Tooltip>
+                  {keyById(id.sshKeyId) ? (
+                    <Tooltip>
+                      <TooltipTrigger asChild>
+                        <div className="text-text-2 text-xs mt-1 font-mono truncate max-w-md">{keyById(id.sshKeyId)?.privatePath}</div>
+                      </TooltipTrigger>
+                      <TooltipContent>{keyById(id.sshKeyId)?.privatePath}</TooltipContent>
+                    </Tooltip>
+                  ) : (
+                    <div className="text-warning text-xs mt-1">{t('identities.noKeyBound')}</div>
+                  )}
                   {id.matchPath && <div className="text-text-2 text-xs mt-0.5">{t('identities.match')}: {id.matchPath}</div>}
                 </div>
                 <div className="flex gap-2 shrink-0">
@@ -147,7 +199,7 @@ export function IdentitiesView() {
                     {t('common.edit')}
                   </Button>
                   <Button variant="outline" size="sm" onClick={() => setGenFor(id)}>
-                    {id.label.startsWith('id_') ? t('identities.regenerateKey') : t('identities.generateKey')}
+                    {id.sshKeyId ? t('identities.regenerateKey') : t('identities.generateAndBindKey')}
                   </Button>
                   <Button variant="danger" size="sm" onClick={() => openDelete(id)}>
                     {t('common.delete')}
@@ -186,13 +238,26 @@ export function IdentitiesView() {
             open={!!genFor}
             onOpenChange={(v) => !v && setGenFor(null)}
             defaultName={genFor.label || 'id_ed25519'}
-            defaultDir={genFor.keyPath || '~/.ssh/'}
+            defaultDir={keyById(genFor.sshKeyId)?.privatePath?.replace(/[/\\][^/\\]+$/, '') || '~/.ssh/'}
             defaultComment={genFor.userEmail}
-            onGenerated={async (keyPath) => {
-              // keyPath is the *directory* the key was generated into.
-              // We persist it as the identity's key directory; the
-              // filename is <label> (see IdentityFormDialog).
-              await update(genFor.id, { ...genFor, keyPath });
+            onGenerated={async (privatePath) => {
+              // Refresh the shared keys store so ProjectsView
+              // and IdentitySwitcherDialog see the new record
+              // immediately, then pick it back out by path to
+              // bind it to the current identity. `genFor` may
+              // have been cleared while this async tick runs
+              // (the user closed the dialog), so guard before
+              // mutating the store.
+              await refreshKeys();
+              if (!genFor) return;
+              const stored = useKeysStore.getState().items;
+              const key = stored.find(
+                (item) => item.privatePath === privatePath,
+              );
+              if (!key) {
+                throw new Error('Generated SSH key was not found');
+              }
+              await update(genFor.id, { ...genFor, sshKeyId: key.id });
               toast.success(t('identities.keyGenerated'));
             }}
           />
@@ -240,7 +305,7 @@ export function IdentitiesView() {
               <label
                 className={
                   'flex items-start gap-2 rounded-md border p-3 ' +
-                  (deleting && deleting.keyPath.trim().length > 0
+                  (deleting && !!keyById(deleting.sshKeyId)
                     ? 'border-border cursor-pointer hover:bg-bg-2'
                     : 'border-border opacity-60 cursor-not-allowed')
                 }
@@ -251,7 +316,7 @@ export function IdentitiesView() {
                   name="delete-mode"
                   value="withFiles"
                   checked={deleteMode === 'withFiles'}
-                  disabled={!deleting || deleting.keyPath.trim().length === 0}
+                  disabled={!deleting || !keyById(deleting.sshKeyId)}
                   onChange={() => setDeleteMode('withFiles')}
                 />
                 <div className="min-w-0">
@@ -261,14 +326,14 @@ export function IdentitiesView() {
                   <div className="text-text-1 text-xs mt-0.5">
                     {t('identities.deleteWithFilesHint')}
                   </div>
-                  {deleting && deleting.keyPath.trim().length > 0 ? (
+                  {deleting && keyById(deleting.sshKeyId) ? (
                     deleteMode === 'withFiles' ? (
                       <div className="text-danger text-xs mt-2 break-all">
-                        {t('identities.deleteFileWarning', { path: deleting.keyPath })}
+                        {t('identities.deleteFileWarning', { path: keyById(deleting.sshKeyId)?.privatePath })}
                       </div>
                     ) : (
                       <div className="text-text-2 text-xs mt-2 font-mono break-all">
-                        {deleting.keyPath}
+                        {keyById(deleting.sshKeyId)?.privatePath}
                       </div>
                     )
                   ) : (

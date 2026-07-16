@@ -5,7 +5,7 @@ export interface Identity {
   label: string;
   userName: string;
   userEmail: string;
-  keyPath: string;
+  sshKeyId: string | null;
   matchPath: string | null;
   hostAlias: string | null;
   gitHost: string | null;
@@ -23,7 +23,19 @@ export const deleteIdentity = (
 
 export type ScannedProvenanceKind = 'gitconfig_include_if' | 'ssh_key_orphan';
 
+export interface ScannedProvenanceSource {
+  kind: ScannedProvenanceKind;
+  detail: string;
+}
+
 export interface ScannedProvenance {
+  /** All sources backing this candidate (>=1). After the
+   *  cross-source dedup pass a label found by both the gitconfig
+   *  scanner AND the ssh-orphan scanner will list both. */
+  sources: ScannedProvenanceSource[];
+  /** Back-compat single-source view. When the same label is
+   *  found by multiple scanners, this resolves to whichever
+   *  source the backend prefers (gitconfig currently). */
   kind: ScannedProvenanceKind;
   detail: string;
 }

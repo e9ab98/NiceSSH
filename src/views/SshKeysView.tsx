@@ -5,51 +5,40 @@ import { Badge } from '../components/ui/badge';
 import { Button } from '../components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../components/ui/dialog';
 import {
-  listKeys,
-  SshKeyInfo,
+  type SshKeyInfo,
   getPublicKey,
   copyPublicKey,
   deleteKey,
 } from '../ipc/sshKeys';
-import { useIdentitiesStore } from '../store/identities';
+import { useIdentitiesStore, useKeysStore } from '../store/identities';
 import { IdentityFormDialog } from '../features/identityForm/IdentityFormDialog';
 import { Copy, Eye, Trash2, Pencil, Plus } from 'lucide-react';
 import { toast } from 'sonner';
 import type { Identity } from '../ipc/identities';
-import { dirname, fullKeyPath } from '../lib/keyPath';
-
-// Match a key file (absolute path, e.g. /Users/x/.ssh/id_ed25519) against
-// an Identity.keyPath (which the user may have stored as "~/.ssh/id_ed25519"
-// or "/Users/x/.ssh/id_ed25519"). Compares filenames plus the parent dir.
-function sameKeyFile(privatePath: string, identityKeyPath: string): boolean {
-  if (!privatePath || !identityKeyPath) return false;
-  const a = privatePath.replace(/\\/g, '/');
-  let b = identityKeyPath.replace(/\\/g, '/');
-  if (b.startsWith('~/')) b = b.slice(2);
-  if (a === b) return true;
-  return a.split('/').slice(-2).join('/') === b.split('/').slice(-2).join('/');
-}
 
 export function SshKeysView() {
   const { t } = useTranslation();
-  const [keys, setKeys] = useState<SshKeyInfo[]>([]);
+  const keys = useKeysStore((s) => s.items);
+  const refreshKeys = useKeysStore((s) => s.refresh);
   const { items: identities, refresh: refreshIdentities, create, update } = useIdentitiesStore();
   const [editing, setEditing] = useState<Identity | null>(null);
   const [creating, setCreating] = useState<SshKeyInfo | null>(null);
   const [viewingPub, setViewingPub] = useState<{ name: string; pub: string } | null>(null);
   const [busy, setBusy] = useState<string | null>(null);
 
-  const refresh = () => listKeys().then(setKeys).catch(() => setKeys([]));
+  // Back-compat alias so the existing call sites (e.g. onDelete)
+  // continue to work unchanged.
+  const refresh = refreshKeys;
 
   useEffect(() => {
-    refresh();
+    refreshKeys();
     refreshIdentities();
-  }, [refreshIdentities]);
+  }, [refreshIdentities, refreshKeys]);
 
   const matchesByKey = useMemo(() => {
     const map = new Map<string, Identity[]>();
     for (const k of keys) {
-      const matches = identities.filter((id) => sameKeyFile(k.privatePath, fullKeyPath(id)));
+      const matches = identities.filter((id) => id.sshKeyId === k.id);
       map.set(k.privatePath, matches);
     }
     return map;
@@ -193,22 +182,16 @@ export function SshKeysView() {
       )}
 
       {creating && (() => {
-        // The scanner gave us a *file* path for an existing SSH key
-        // (e.g. /Users/x/.ssh/e9ab98-GitHub/e9ab98-GitHub). The identity
-        // form stores just the *directory*, so split it here and pass
-        // the key's basename as defaultLabel. Doing it in one place keeps
-        // the dialog from having to guess the layout.
-        const dir = dirname(creating.privatePath);
-        const dirWithSlash = dir.endsWith('/') ? dir : dir + '/';
+            // The scanner gave us a *file* path for an existing SSH key
+        // The existing key path is binding context, not a path to edit.
         return (
           <IdentityFormDialog
             key={creating.privatePath}
             open={!!creating}
             onOpenChange={(v) => !v && setCreating(null)}
-            defaultKeyPath={dirWithSlash}
             defaultLabel={creating.name}
             onSubmit={async (values) => {
-              await create({ ...values, keyPath: dirWithSlash });
+              await create({ ...values, sshKeyId: creating.id });
               setCreating(null);
             }}
           />

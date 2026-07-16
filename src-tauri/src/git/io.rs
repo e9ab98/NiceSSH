@@ -60,7 +60,8 @@ pub(crate) fn write_repo_gitconfig(repo_path: &Path, identity: &Identity) -> Res
         )));
     }
     let raw = std::fs::read_to_string(&gitconfig)?;
-    let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
+    let cfg = config_store::read()?;
+    let full_key = config_store::identity_private_path(&cfg, identity)?;
     let ssh_cmd = format!(
         "ssh -i {} -o IdentitiesOnly=yes",
         full_key
@@ -226,7 +227,8 @@ pub(crate) fn clean_repo_gitconfig(project_id: String) -> Result<()> {
     } else {
         kept.join("\n") + "\n"
     };
-    let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
+    let cfg = config_store::read()?;
+    let full_key = config_store::identity_private_path(&cfg, identity)?;
     let managed_block = if emit_sshcommand {
         let ssh_cmd = format!("ssh -i {} -o IdentitiesOnly=yes", full_key);
         format!(
@@ -303,7 +305,7 @@ mod io_tests {
             label: label.into(),
             user_name: name.into(),
             user_email: email.into(),
-            key_path: key.into(),
+            ssh_key_id: Some(format!("key_{label}")),
             match_path: None,
             host_alias: None,
             git_host: None,
@@ -330,6 +332,9 @@ mod io_tests {
         // level closer to the splice helpers.
         with_temp_home("io-write-idempotent", || {
             let id = ident("alice", "Alice", "a@x", "~/.ssh/id_alice");
+            let mut cfg = crate::config_store::read().unwrap();
+            cfg.ssh_keys.push(crate::config_store::SshKey { id: id.ssh_key_id.clone().unwrap(), name: "alice".into(), private_path: "~/.ssh/id_alice".into(), public_path: None, key_type: None, fingerprint: None, comment: None });
+            crate::config_store::write_snapshot(&cfg, "test", "fixture").unwrap();
             let repo = home().join("repo");
             write_repo_config(&repo,
                 "[user]\n    name = Old\n    email = o@x\n[core]\n    sshCommand = ssh -i ~/.ssh/old\n");
@@ -368,6 +373,7 @@ mod io_tests {
                 version: CURRENT_VERSION,
                 theme: "system".into(),
                 identities: vec![id.clone()],
+                ssh_keys: vec![crate::config_store::SshKey { id: id.ssh_key_id.clone().unwrap(), name: id.label.clone(), private_path: "~/.ssh/id_alice".into(), public_path: None, key_type: None, fingerprint: None, comment: None }],
                 projects: vec![Project {
                     id: "proj1".into(),
                     name: "repo".into(),
@@ -468,7 +474,7 @@ mod io_tests {
             let id = crate::config_store::Identity {
                 id: "id1".into(), label: "work".into(),
                 user_name: "Alice".into(), user_email: "a@x".into(),
-                key_path: "~/.ssh/id_work".into(), match_path: None,
+                ssh_key_id: Some("key_work".into()), match_path: None,
                 host_alias: None, git_host: None,
             };
             let dir = crate::paths::nicessh_dir().unwrap();
@@ -477,6 +483,7 @@ mod io_tests {
                 version: crate::config_store::CURRENT_VERSION,
                 theme: "system".into(),
                 identities: vec![id],
+                ssh_keys: vec![crate::config_store::SshKey { id: "key_work".into(), name: "work".into(), private_path: "~/.ssh/id_work".into(), public_path: None, key_type: None, fingerprint: None, comment: None }],
                 projects: vec![Project {
                     id: "p1".into(),
                     name: "https_proj".into(),
@@ -506,7 +513,7 @@ mod io_tests {
             let id = crate::config_store::Identity {
                 id: "id1".into(), label: "work".into(),
                 user_name: "Alice".into(), user_email: "a@x".into(),
-                key_path: "~/.ssh/id_work".into(), match_path: None,
+                ssh_key_id: Some("key_work".into()), match_path: None,
                 host_alias: None, git_host: None,
             };
             let dir = crate::paths::nicessh_dir().unwrap();
@@ -515,6 +522,7 @@ mod io_tests {
                 version: crate::config_store::CURRENT_VERSION,
                 theme: "system".into(),
                 identities: vec![id],
+                ssh_keys: vec![crate::config_store::SshKey { id: "key_work".into(), name: "work".into(), private_path: "~/.ssh/id_work".into(), public_path: None, key_type: None, fingerprint: None, comment: None }],
                 projects: vec![Project {
                     id: "p1".into(),
                     name: "ssh_proj".into(),
@@ -542,7 +550,7 @@ mod io_tests {
             let id = crate::config_store::Identity {
                 id: "id1".into(), label: "work".into(),
                 user_name: "Alice".into(), user_email: "a@x".into(),
-                key_path: "~/.ssh/id_work".into(), match_path: None,
+                ssh_key_id: Some("key_work".into()), match_path: None,
                 host_alias: None, git_host: None,
             };
             let dir = crate::paths::nicessh_dir().unwrap();
@@ -551,6 +559,7 @@ mod io_tests {
                 version: crate::config_store::CURRENT_VERSION,
                 theme: "system".into(),
                 identities: vec![id],
+                ssh_keys: vec![crate::config_store::SshKey { id: "key_work".into(), name: "work".into(), private_path: "~/.ssh/id_work".into(), public_path: None, key_type: None, fingerprint: None, comment: None }],
                 projects: vec![Project {
                     id: "p1".into(),
                     name: "no_remote".into(),
@@ -584,7 +593,7 @@ mod io_tests {
             let id = crate::config_store::Identity {
                 id: "id1".into(), label: "https_proj".into(),
                 user_name: "New".into(), user_email: "n@x".into(),
-                key_path: "~/.ssh/id_https".into(), match_path: None,
+                ssh_key_id: None, match_path: None,
                 host_alias: None, git_host: None,
             };
             super::write_repo_user_only(&repo, &id).unwrap();

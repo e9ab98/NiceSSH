@@ -391,11 +391,10 @@ pub(crate) fn build_core_sshcommand_line(ssh_cmd: &str, raw: &str) -> String {
     }
 }
 
-pub(crate) fn rewrite_global_defaults(raw: &str, identity: &Identity) -> String {
+pub(crate) fn rewrite_global_defaults(raw: &str, identity: &Identity, private_path: &str) -> String {
     let sections = parse_gitconfig_sections(raw);
 
-    let full_key = paths::resolve_key_path(&identity.key_path, &identity.label);
-    let ssh_cmd = format!("ssh -i {} -o IdentitiesOnly=yes", full_key);
+    let ssh_cmd = format!("ssh -i {} -o IdentitiesOnly=yes", private_path);
 
     // Look for existing [user] and [core] sections (case-insensitive, top-level only).
     let mut user_idx: Option<usize> = None;
@@ -517,7 +516,7 @@ mod rewrite_tests {
             label: "Work".into(),
             user_name: "工作名".into(),
             user_email: "work@x.com".into(),
-            key_path: "~/.ssh/work_ed25519".into(),
+            ssh_key_id: None,
             match_path: None,
             host_alias: None,
             git_host: None,
@@ -527,12 +526,12 @@ mod rewrite_tests {
     #[test]
     fn preserves_include_if_block() {
         let raw = "[user]\n    name = old\n    email = old@x.com\n\n[includeIf \"gitdir:~/work/\"]\n    path = ~/.gitconfig-work\n\n[core]\n    sshCommand = ssh -i old\n";
-        let after = rewrite_global_defaults(raw, &ident());
+        let after = rewrite_global_defaults(raw, &ident(), "~/.ssh/id_test");
         assert!(after.contains("[includeIf \"gitdir:~/work/\"]"));
         assert!(after.contains("path = ~/.gitconfig-work"));
         assert!(after.contains("name = 工作名"));
         assert!(after.contains("email = work@x.com"));
-        assert!(after.contains("sshCommand = ssh -i ~/.ssh/work_ed25519"));
+        assert!(after.contains("sshCommand = ssh -i ~/.ssh/id_test"));
         // No leftover old values in the rewritten [user] / [core] sshCommand
         assert!(!after.contains("name = old"));
         assert!(!after.contains("email = old@x.com"));
@@ -542,7 +541,7 @@ mod rewrite_tests {
     #[test]
     fn appends_user_when_missing() {
         let raw = "[includeIf \"gitdir:~/foo/\"]\n    path = ~/.gitconfig-foo\n";
-        let after = rewrite_global_defaults(raw, &ident());
+        let after = rewrite_global_defaults(raw, &ident(), "~/.ssh/id_test");
         assert!(after.contains("[includeIf \"gitdir:~/foo/\"]"));
         assert!(after.contains("[user]\n    name = 工作名"));
     }
@@ -550,8 +549,8 @@ mod rewrite_tests {
     #[test]
     fn appends_core_sshcommand_when_missing() {
         let raw = "[user]\n    name = a\n    email = a@x.com\n";
-        let after = rewrite_global_defaults(raw, &ident());
-        assert!(after.contains("[core]\n    sshCommand = ssh -i ~/.ssh/work_ed25519"));
+        let after = rewrite_global_defaults(raw, &ident(), "~/.ssh/id_test");
+        assert!(after.contains("[core]\n    sshCommand = ssh -i ~/.ssh/id_test"));
     }
 
     #[test]
@@ -560,12 +559,11 @@ mod rewrite_tests {
         // at <key_path>/<label>. The rewritten sshCommand must point at
         // the resolved full path, not the directory.
         let mut id = ident();
-        id.key_path = "/Users/x/.ssh/e9ab98-GitHub".into();
         id.label = "id_work".into();
         let raw = "";
-        let after = rewrite_global_defaults(raw, &id);
+        let after = rewrite_global_defaults(raw, &id, "~/.ssh/id_test");
         assert!(
-            after.contains("sshCommand = ssh -i /Users/x/.ssh/e9ab98-GitHub/id_work"),
+            after.contains("sshCommand = ssh -i ~/.ssh/id_test"),
             "expected resolved full key path, got:\n{}",
             after
         );
@@ -574,7 +572,7 @@ mod rewrite_tests {
     #[test]
     fn handles_empty_input() {
         let raw = "";
-        let after = rewrite_global_defaults(raw, &ident());
+        let after = rewrite_global_defaults(raw, &ident(), "~/.ssh/id_test");
         assert!(after.contains("[user]"));
         assert!(after.contains("[core]"));
     }
@@ -592,7 +590,7 @@ mod https_splice_tests {
             label: "alice".into(),
             user_name: "Alice".into(),
             user_email: "alice@co.com".into(),
-            key_path: "~/.ssh/id_alice".into(),
+            ssh_key_id: None,
             match_path: None,
             host_alias: None,
             git_host: None,

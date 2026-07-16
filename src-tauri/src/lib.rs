@@ -47,6 +47,7 @@ pub fn run() {
             commands::project::remove_project,
             commands::project::assign_identity,
             commands::ssh_key::list_keys,
+            commands::ssh_key::import_key,
             commands::ssh_key::ssh_key_exists,
             commands::ssh_key::generate_key,
             commands::ssh_key::delete_key,

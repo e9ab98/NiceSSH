@@ -1,12 +1,14 @@
 import { ipc } from './client';
 
 export interface GeneratedKey {
+  id: string;
   privatePath: string;
   publicKey: string;
   fingerprint: string;
 }
 
 export interface SshKeyInfo {
+  id: string;
   name: string;
   privatePath: string;
   publicPath: string | null;
@@ -16,6 +18,7 @@ export interface SshKeyInfo {
 }
 
 export const listKeys = () => ipc<SshKeyInfo[]>('list_keys');
+export const importKey = (privatePath: string) => ipc<SshKeyInfo>('import_key', { privatePath });
 export const generateKey = (params: { name: string; keyType: string; comment: string; passphrase: string | null; dir?: string | null }) =>
   ipc<GeneratedKey>('generate_key', params);
 export const deleteKey = (name: string) => ipc<void>('delete_key', { name });

@@ -18,7 +18,7 @@ interface Props {
   // lands at <dir>/<name>. The directory must already exist (we don't
   // auto-create it from this dialog). Omit to fall back to ~/.ssh/.
   defaultDir?: string;
-  onGenerated: (keyPath: string, publicKey: string) => void;
+  onGenerated: (privatePath: string, publicKey: string) => void;
 }
 
 export function KeyGeneratorDialog({ open, onOpenChange, defaultName, defaultComment, defaultDir, onGenerated }: Props) {
@@ -68,7 +68,7 @@ export function KeyGeneratorDialog({ open, onOpenChange, defaultName, defaultCom
         ? defaultDir
         : '~/.ssh/';
       const dirWithSlash = resolvedDir.endsWith('/') ? resolvedDir : resolvedDir + '/';
-      onGenerated(dirWithSlash, result.publicKey);
+      onGenerated(result.privatePath || `${dirWithSlash}${name}`, result.publicKey);
       toast.success(t('keyGenerator.success'));
     } finally {
       setSubmitting(false);
