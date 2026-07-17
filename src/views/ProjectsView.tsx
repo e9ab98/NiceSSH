@@ -9,7 +9,8 @@ import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../com
 import { useProjectsStore } from '../store/projects';
 import { useIdentitiesStore, useKeysStore, type SshKeyInfo } from '../store/identities';
 import { useSettingsStore } from '../store/settings';
-import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, getGlobalGitConfig, gitStatus, initRepo, isGitRepo, type RepoGitConfig, type GlobalGitConfig, type RepoStatus } from '../ipc/git';
+import { useGlobalDefaultStore } from '../store/globalDefault';
+import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, gitStatus, initRepo, isGitRepo, type RepoGitConfig, type RepoStatus } from '../ipc/git';
 import { tryUnlockKey, isKeyEncrypted } from '../ipc/sshAdd';
 import { IdentitySwitcherDialog } from '../features/identitySwitcher/IdentitySwitcherDialog';
 import { RepoAuditDialog } from '../features/repoAudit/RepoAuditDialog';
@@ -23,6 +24,8 @@ import { ConnectionTesterDialog } from '../features/connectionTester/ConnectionT
 import { ContextMenu } from '../components/ContextMenu';
 import { toast } from 'sonner';
 import { cn } from '../lib/utils';
+import { resolveImportIdentity } from '../lib/resolveImportIdentity';
+import { isIdentitySynced } from '../lib/isIdentitySynced';
 import type { Identity } from '../ipc/identities';
 // SshKeyInfo type re-exported via identities store
 // (no direct ipc import needed here)
@@ -30,6 +33,13 @@ import type { Identity } from '../ipc/identities';
 type DetectedIdentity =
   | { kind: 'none' }
   | { kind: 'untracked'; keyPath: string }
+  /// Repository has `[user] name/email` in .git/config (or a non-NiceSSH
+  /// sshCommand) but we couldn't match it to a known NiceSSH identity
+  /// and there's no SSH key path to attribute. This is the typical
+  /// state of an HTTPS remote where the user typed credentials into
+  /// Git's UI but never created a NiceSSH-managed identity for it.
+  /// Treated as "configured at the project level" — no need to bind.
+  | { kind: 'user-only' }
   | { kind: 'tracked'; identity: Identity; source: 'config' | 'git' };
 
 function detectIdentity(
@@ -38,14 +48,36 @@ function detectIdentity(
   repoConfig: RepoGitConfig | null,
   keys: SshKeyInfo[],
 ): DetectedIdentity {
+  // Priority 1: NiceSSH has recorded an identity id for this project.
   if (project.identityId) {
     const found = identities.find((i) => i.id === project.identityId);
     if (found) return { kind: 'tracked', identity: found, source: 'config' };
   }
-  if (repoConfig?.sshKeyPath) {
-    const match = identities.find((i) => keys.find((key) => key.id === i.sshKeyId)?.privatePath === repoConfig.sshKeyPath);
-    if (match) return { kind: 'tracked', identity: match, source: 'git' };
-    return { kind: 'untracked', keyPath: repoConfig.sshKeyPath };
+  // Priority 2: the repo has project-level identity config. We treat
+  // `[user] name/email` AND any `[core] sshCommand` as "configured".
+  // This is the HTTPS-friendly path: an HTTPS remote with user.name
+  // and user.email set is considered bound even though sshKeyPath is
+  // null (SSH keys don't apply to HTTPS).
+  const hasProjectConfig =
+    !!repoConfig &&
+    (!!repoConfig.userName ||
+      !!repoConfig.userEmail ||
+      repoConfig.sshCommandCount > 0);
+  if (hasProjectConfig) {
+    // Try to attribute the repo's identity to a known NiceSSH
+    // identity via SSH key path (SSH remotes).
+    if (repoConfig?.sshKeyPath) {
+      const match = identities.find(
+        (i) =>
+          keys.find((key) => key.id === i.sshKeyId)?.privatePath ===
+          repoConfig.sshKeyPath,
+      );
+      if (match) return { kind: 'tracked', identity: match, source: 'git' };
+      return { kind: 'untracked', keyPath: repoConfig.sshKeyPath };
+    }
+    // No SSH key to attribute (HTTPS or key-less setup). Project
+    // config exists; don't fabricate a "no identity" badge.
+    return { kind: 'user-only' };
   }
   return { kind: 'none' };
 }
@@ -116,7 +148,6 @@ export function ProjectsView() {
   const [passOpen, setPassOpen] = useState(false);
   const [pendingIdentityId, setPendingIdentityId] = useState<string | null>(null);
   const [repoConfigs, setRepoConfigs] = useState<Record<string, RepoGitConfig>>({});
-  const [globalGit, setGlobalGit] = useState<GlobalGitConfig | null>(null);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; projectId: string; projectName: string } | null>(null);
   const [adding, setAdding] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
@@ -178,10 +209,6 @@ export function ProjectsView() {
   }, [refreshKeys]);
 
   useEffect(() => {
-    getGlobalGitConfig().then(setGlobalGit).catch(() => setGlobalGit(null));
-  }, []);
-
-  useEffect(() => {
     let cancelled = false;
     (async () => {
       const out: Record<string, RepoGitConfig> = {};
@@ -233,7 +260,9 @@ export function ProjectsView() {
     for (const p of projects) {
       const cfg = repoConfigs[p.id];
       const d = detectIdentity(p, identities, cfg ?? null, keys);
-      if (d.kind === 'tracked') bound++;
+      // 'tracked' AND 'user-only' both mean "has project-level config";
+      // 'untracked' / 'none' both mean "nothing to attribute to".
+      if (d.kind === 'tracked' || d.kind === 'user-only') bound++;
       else unbound++;
     }
     // errors: projects whose getRepoGitConfig returned hasConfig=false (loaded as fallback)
@@ -241,10 +270,22 @@ export function ProjectsView() {
     return { total: projects.length, bound, unbound, errors };
   }, [projects, identities, repoConfigs]);
 
-  const defaultIdentityId = (() => {
-    if (!globalGit?.sshKeyPath) return null;
-    const match = identities.find((i) => privatePathFor(i) === globalGit.sshKeyPath);
-    return match?.id ?? null;
+  // Resolves the identity to use as the "Add Project" default.
+  // Pulled from useGlobalDefaultStore (NiceSSH cfg.globalDefaultIdentityId)
+  // rather than reverse-engineering it from the parsed ~/.gitconfig, so
+  // a global default that has no SSH key still counts.
+  // See resolveImportIdentity for the priority rules.
+  const globalDefaultId = useGlobalDefaultStore((s) => s.id);
+  const refreshGlobalDefault = useGlobalDefaultStore((s) => s.refresh);
+
+  useEffect(() => {
+    void refreshGlobalDefault();
+  }, [refreshGlobalDefault]);
+
+  const resolvedGlobalDefault = (() => {
+    if (!globalDefaultId) return null;
+    const exists = identities.some((i) => i.id === globalDefaultId);
+    return { identityId: globalDefaultId, exists };
   })();
 
   // Controls the modal that prompts for a missing remote URL.
@@ -363,9 +404,45 @@ export function ProjectsView() {
     try {
       const picked = await openDirDialog({ directory: true, multiple: false });
       if (typeof picked !== 'string') return;
-      const project = await add({ name: deriveName(picked), path: picked, identityId: defaultIdentityId });
-      if (defaultIdentityId) {
-        await bindIdentity(project.id, defaultIdentityId, project.path);
+      // Resolve which identity to bind via the priority rules in
+      // resolveImportIdentity. We re-read the repo's git config here
+      // rather than relying on `repoConfigs`, because the picked path
+      // is brand new and not yet in the store.
+      let resolved: { identityId: string | null; needsBinding: boolean } = {
+        identityId: null,
+        needsBinding: false,
+      };
+      try {
+        const fresh = await getRepoGitConfig(picked);
+        const decision = resolveImportIdentity({
+          repoConfig: {
+            userName: fresh.userName,
+            userEmail: fresh.userEmail,
+            // The repo's `.git/config` already has an `[core] sshCommand`
+            // — whether it was written by NiceSSH (managedByNicessh)
+            // or hand-edited — counts as "project-level config" and
+            // should not be auto-bound over. We only need a truthy
+            // signal here; the resolver doesn't care about the value.
+            sshCommand:
+              fresh.managedByNicessh || fresh.sshCommandCount > 0
+                ? 'present'
+                : null,
+          },
+          includeIfResult: { resolved: false }, // see spec "已知缺口"
+          globalDefault: resolvedGlobalDefault,
+        });
+        resolved = { identityId: decision.identityId, needsBinding: decision.needsBinding };
+      } catch {
+        // If we can't read the repo config at all, fall through with no
+        // default; the user can bind manually from the project detail.
+      }
+      const project = await add({
+        name: deriveName(picked),
+        path: picked,
+        identityId: resolved.identityId,
+      });
+      if (resolved.needsBinding && resolved.identityId) {
+        await bindIdentity(project.id, resolved.identityId, project.path);
       } else {
         toast.success(t('projects.added'));
       }
@@ -559,8 +636,8 @@ export function ProjectsView() {
                           <div className="text-sm font-semibold text-text-0 truncate">{p.name}</div>
                           <div className="text-xs text-text-2 truncate font-mono">{p.path}</div>
                         </div>
-                        <Badge variant={d.kind === 'tracked' ? 'success' : d.kind === 'untracked' ? 'warning' : 'default'}>
-                          {d.kind === 'tracked' ? t('projects.badge.bound') : d.kind === 'untracked' ? t('projects.badge.untracked') : t('projects.badge.unbound')}
+                        <Badge variant={d.kind === 'tracked' || d.kind === 'user-only' ? 'success' : d.kind === 'untracked' ? 'warning' : 'default'}>
+                          {d.kind === 'tracked' || d.kind === 'user-only' ? t('projects.badge.bound') : d.kind === 'untracked' ? t('projects.badge.untracked') : t('projects.badge.unbound')}
                         </Badge>
                       </li>
                     );
@@ -805,6 +882,11 @@ function ProjectDetail({ project, detected, keyPath, hasIdentities, repoConfig, 
     !!repoConfig.userName?.trim() &&
     !!repoConfig.userEmail?.trim();
 
+  // Whether the bound NiceSSH identity is in sync with what
+  // .git/config actually contains. null = no judgement (not tracked
+  // or IPC still loading), true = in sync, false = out of sync.
+  const syncState = isIdentitySynced(detected, repoConfig);
+
   return (
     <div className="flex flex-col gap-5">
       {/* Header */}
@@ -873,6 +955,49 @@ function ProjectDetail({ project, detected, keyPath, hasIdentities, repoConfig, 
               <KV label={t('projects.detail.email')} value={identity.userEmail || '—'} mono />
               {keyPath && <KV label={t('projects.detail.key')} value={keyPath} mono />}
               {identity.matchPath && <KV label={t('projects.match')} value={identity.matchPath} mono />}
+              {repoConfig && (repoConfig.userName || repoConfig.userEmail) && (
+                <>
+                  <div className="border-t border-border my-1.5" />
+                  {syncState === false ? (
+                    // Out of sync: show Git's actual values so the
+                    // user can see the disagreement at a glance.
+                    <div className="flex flex-col gap-0.5">
+                      {repoConfig.userName && (
+                        <KV
+                          label={t('projects.detail.userName')}
+                          value={repoConfig.userName}
+                        />
+                      )}
+                      {repoConfig.userEmail && (
+                        <KV
+                          label={t('projects.detail.userEmail')}
+                          value={repoConfig.userEmail}
+                          mono
+                        />
+                      )}
+                    </div>
+                  ) : (
+                    <p className="text-xs text-text-2">
+                      {t('projects.detail.syncedHint')}
+                    </p>
+                  )}
+                </>
+              )}
+            </>
+          ) : detected.kind === 'user-only' && repoConfig ? (
+            // HTTPS-style "project-level identity exists but we can't
+            // attribute it to a NiceSSH identity" state. Surface what
+            // Git itself sees so the user knows who's committing.
+            <>
+              <KV label={t('projects.detail.name')} value={repoConfig.userName ?? '—'} />
+              <KV
+                label={t('projects.detail.email')}
+                value={repoConfig.userEmail ?? '—'}
+                mono
+              />
+              <p className="text-xs text-text-2 mt-1">
+                {t('projects.detail.userOnlyNote')}
+              </p>
             </>
           ) : untrackedKey ? (
             <div className="text-text-1 text-xs">
@@ -882,27 +1007,28 @@ function ProjectDetail({ project, detected, keyPath, hasIdentities, repoConfig, 
             <div className="text-text-2 text-sm">{t('projects.detail.noIdentity')}</div>
           )}
           <div className="flex flex-wrap items-center gap-1.5 pt-1">
+            {syncState === false && (
+              <Tooltip>
+                <TooltipTrigger asChild>
+                  <Badge variant="warning">{t('projects.outOfSyncBadge')}</Badge>
+                </TooltipTrigger>
+                <TooltipContent className="max-w-xs">
+                  {t('projects.outOfSyncTooltip')}
+                </TooltipContent>
+              </Tooltip>
+            )}
             {detected.kind === 'tracked' && detected.source === 'git' && (
               <Badge variant="outline">{t('projects.detectedFromGit')}</Badge>
             )}
             {(detected.kind === 'untracked' || detected.kind === 'none') && (
               <Badge variant="warning">{t('projects.noIdentityBadge')}</Badge>
             )}
+            {detected.kind === 'user-only' && (
+              <Badge variant="outline">{t('projects.badge.userOnly')}</Badge>
+            )}
           </div>
         </div>
       </div>
-
-      {/* Git Config */}
-      {repoConfig && (
-        <div>
-          <SectionLabel>{t('projects.detail.gitConfig')}</SectionLabel>
-          <div className="rounded-xl border border-border bg-bg-0 p-3 flex flex-col gap-1.5 text-sm">
-            <KV label={t('projects.detail.userName')} value={repoConfig.userName} />
-            <KV label={t('projects.detail.userEmail')} value={repoConfig.userEmail} mono />
-            <KV label={t('projects.detail.sshKey')} value={repoConfig.sshKeyPath} mono />
-          </div>
-        </div>
-      )}
 
       {/* Quick Actions: fetch / pull / commit / push. Only shown
           for projects that ARE git repositories. Buttons are

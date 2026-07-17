@@ -73,7 +73,8 @@
     "badge": {
       "bound": "已绑定",
       "unbound": "无身份",
-      "untracked": "未追踪"
+      "untracked": "未追踪",
+      "userOnly": "已设置 user.name/email"
     },
     "detail": {
       "identity": "Git 身份",
@@ -90,7 +91,9 @@
       "remoteUnknownNote": "无法识别的远程地址——SSH key 是否生效未知。",
       "remoteNone": "未配置远程地址。绑定身份时会提示输入。",
       "notARepoTitle": "此目录不是 git 仓库",
-      "notARepoBody": "选择一个身份后，NiceSSH 会在此目录运行 git init 并创建初始提交。"
+      "notARepoBody": "选择一个身份后，NiceSSH 会在此目录运行 git init 并创建初始提交。",
+      "userOnlyNote": "仓库内已有 user.name/email，但未关联到 NiceSSH 身份；如需管理可点击下方「绑定身份」。",
+      "syncedHint": "已同步到 .git/config（提交将使用以上信息）"
     },
     "action": {
       "switch": "切换身份",
@@ -115,7 +118,9 @@
     },
     "initProject": "初始化项目",
     "initSuccess": "项目已初始化",
-    "initNoIdentity": "请先在身份管理中创建一个身份"
+    "initNoIdentity": "请先在身份管理中创建一个身份",
+    "outOfSyncBadge": ".git/config 与绑定身份不一致",
+    "outOfSyncTooltip": "NiceSSH 显示的身份信息与仓库 .git/config 实际内容不一致。提交时使用的将是 .git/config 中的值，请重新绑定以同步。"
   },
   "identities": {
     "title": "身份",

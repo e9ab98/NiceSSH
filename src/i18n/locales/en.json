@@ -73,7 +73,8 @@
     "badge": {
       "bound": "bound",
       "unbound": "no identity",
-      "untracked": "untracked"
+      "untracked": "untracked",
+      "userOnly": "user.name/email set"
     },
     "detail": {
       "identity": "Git Identity",
@@ -90,7 +91,9 @@
       "remoteUnknownNote": "Unrecognised URL — NiceSSH could not classify it. SSH key may or may not apply.",
       "remoteNone": "No remote configured. Bind action will ask for one.",
       "notARepoTitle": "Not a git repository",
-      "notARepoBody": "Pick an identity and NiceSSH will run git init here and create the initial commit."
+      "notARepoBody": "Pick an identity and NiceSSH will run git init here and create the initial commit.",
+      "userOnlyNote": "The repo has its own user.name/email but is not linked to a NiceSSH identity. Click \"Bind Identity\" below to manage.",
+      "syncedHint": "Synced to .git/config (commits will use the values above)"
     },
     "action": {
       "switch": "Switch identity",
@@ -115,7 +118,9 @@
     },
     "initProject": "Initialize project",
     "initSuccess": "Project initialized",
-    "initNoIdentity": "Please create an identity in the Identity tab first"
+    "initNoIdentity": "Please create an identity in the Identity tab first",
+    "outOfSyncBadge": "Out of sync with .git/config",
+    "outOfSyncTooltip": "The identity shown here disagrees with what .git/config actually contains. Git will commit using the .git/config values — re-bind to sync."
   },
   "identities": {
     "title": "Identities",
