@@ -74,7 +74,8 @@
       "bound": "bound",
       "unbound": "no identity",
       "untracked": "untracked",
-      "userOnly": "user.name/email set"
+      "userOnly": "user.name/email set",
+      "boundFromGlobal": "Bound (from global)"
     },
     "detail": {
       "identity": "Git Identity",
@@ -93,7 +94,8 @@
       "notARepoTitle": "Not a git repository",
       "notARepoBody": "Pick an identity and NiceSSH will run git init here and create the initial commit.",
       "userOnlyNote": "The repo has its own user.name/email but is not linked to a NiceSSH identity. Click \"Bind Identity\" below to manage.",
-      "syncedHint": "Synced to .git/config (commits will use the values above)"
+      "syncedHint": "Synced to .git/config (commits will use the values above)",
+      "syncedFromGlobalHint": "Synced (value comes from git's global config chain, not recorded in the repo)"
     },
     "action": {
       "switch": "Switch identity",
@@ -120,7 +122,16 @@
     "initSuccess": "Project initialized",
     "initNoIdentity": "Please create an identity in the Identity tab first",
     "outOfSyncBadge": "Out of sync with .git/config",
-    "outOfSyncTooltip": "The identity shown here disagrees with what .git/config actually contains. Git will commit using the .git/config values — re-bind to sync."
+    "outOfSyncTooltip": "The identity shown here disagrees with what .git/config actually contains. Git will commit using the .git/config values — re-bind to sync.",
+    "refresh": "Refresh all project configs",
+    "sourceTag": {
+      "project": "project",
+      "projectTip": "Value comes from the repo's own .git/config",
+      "global": "global",
+      "globalTip": "Value comes from git's config chain (~/.gitconfig or includeIf), not recorded in the repo",
+      "globalDefault": "NiceSSH default",
+      "globalDefaultTip": "Value comes from NiceSSH's recorded global default identity (not written to .git/config)"
+    }
   },
   "identities": {
     "title": "Identities",
@@ -493,5 +504,11 @@
       "behind": "{{count}} commit(s) behind",
       "noRemote": "No remote configured"
     }
+  },
+  "clearGlobalDefault": {
+    "title": "Clear global default identity",
+    "description": "NiceSSH will remove the [user] section from ~/.gitconfig (including any user.name / user.email you may have set by hand).",
+    "rollbackHint": "You can restore the values via the history rollback if needed.",
+    "confirm": "Clear it"
   }
 }

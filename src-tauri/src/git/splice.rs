@@ -504,6 +504,40 @@ pub(crate) fn parse_gitconfig_sections(raw: &str) -> Vec<GitConfigSection> {
     sections
 }
 
+/// Remove the entire `[user]` section (header + its `name` / `email`
+/// lines) from a gitconfig string. Other sections — `[core]`,
+/// `[includeIf ...]`, `[remote "..."]`, top-level comments — are
+/// preserved verbatim.
+///
+/// Used by `unset_global_default_identity` to undo the
+/// `set_global_default_identity` write. The result is the
+/// `~/.gitconfig` as it would have been if the user had never set
+/// a NiceSSH global default.
+///
+/// If no `[user]` section exists, returns the input unchanged
+/// (the caller can use that to detect "nothing to undo" and
+/// skip the history commit).
+pub(crate) fn remove_user_section(raw: &str) -> String {
+    let sections = parse_gitconfig_sections(raw);
+    let mut out = String::new();
+    let mut removed = false;
+    for s in sections {
+        // Case-insensitive match on the section name so
+        // `[User]` / `[USER]` are also caught.
+        if s.name.trim().to_ascii_lowercase() == "user" {
+            removed = true;
+            continue;
+        }
+        out.push_str(&s.raw);
+    }
+    if !removed {
+        // Nothing changed. Return the original so callers can
+        // diff before/after and detect "no-op".
+        return raw.to_string();
+    }
+    out
+}
+
 
 #[cfg(test)]
 mod rewrite_tests {
@@ -825,5 +859,51 @@ mod splice_tests {
         let out = call_splice(raw);
         assert_eq!(out.matches("# nicessh-managed").count(), 1,
             "marker should appear exactly once (on sshCommand), got: {}", out);
+    }
+}
+
+#[cfg(test)]
+mod remove_user_tests {
+    use super::remove_user_section;
+
+    #[test]
+    fn removes_user_section_keeps_core_intact() {
+        let raw = "[user]\n    name = Bob\n    email = b@x\n[core]\n    sshCommand = ssh -i ~/.ssh/k\n";
+        let out = remove_user_section(raw);
+        assert!(!out.contains("[user]"));
+        assert!(!out.contains("name ="));
+        assert!(!out.contains("email ="));
+        assert!(out.contains("[core]"));
+        assert!(out.contains("sshCommand = ssh -i ~/.ssh/k"));
+    }
+
+    #[test]
+    fn removes_user_section_keeps_include_if_intact() {
+        let raw = "[includeIf \"gitdir:~/work/\"]\n    path = ~/.gitconfig-work\n[user]\n    name = Bob\n    email = b@x\n";
+        let out = remove_user_section(raw);
+        assert!(!out.contains("[user]"));
+        assert!(out.contains("[includeIf"));
+        assert!(out.contains("path = ~/.gitconfig-work"));
+    }
+
+    #[test]
+    fn returns_input_unchanged_when_no_user_section() {
+        let raw = "[core]\n    sshCommand = ssh -i ~/.ssh/k\n";
+        let out = remove_user_section(raw);
+        assert_eq!(out, raw);
+    }
+
+    #[test]
+    fn case_insensitive_on_section_name() {
+        // [User] (mixed case) must also be caught.
+        let raw = "[User]\n    name = Bob\n    email = b@x\n";
+        let out = remove_user_section(raw);
+        assert!(!out.contains("[User]"));
+        assert!(!out.contains("name ="));
+    }
+
+    #[test]
+    fn handles_empty_input() {
+        assert_eq!(remove_user_section(""), "");
     }
 }

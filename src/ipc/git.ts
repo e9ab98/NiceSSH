@@ -65,10 +65,23 @@ export const testHttpsConnection = (path: string) =>
 export const testHttpsConnectionWithCredentials = (path: string, username: string, password: string) =>
   ipc<ConnectionTestResult>('test_https_connection_with_credentials', { path, username, password });
 
+export type IdentitySource =
+  | 'project'
+  | 'global'
+  | 'globalDefault'
+  | 'none';
+
 export interface RepoGitConfig {
   hasConfig: boolean;
   userName: string | null;
   userEmail: string | null;
+  /// Where `userName` came from. `'project'` = repo's own
+  /// `.git/config`; `'global'` = git's config chain (typically
+  /// `~/.gitconfig`, possibly via `includeIf`); `'none'` = no
+  /// value anywhere. UI uses this to render a source tag.
+  userNameSource: IdentitySource;
+  /// Same as `userNameSource` but for `userEmail`.
+  userEmailSource: IdentitySource;
   sshKeyPath: string | null;
   managedByNicessh: boolean;
   /// Number of `sshCommand` lines found in `.git/config`. A clean

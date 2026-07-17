@@ -10,7 +10,9 @@ import { useGlobalDefaultStore } from '../store/globalDefault';
 import { IdentityFormDialog } from '../features/identityForm/IdentityFormDialog';
 import { KeyGeneratorDialog } from '../features/keyGenerator/KeyGeneratorDialog';
 import { ScanResultsDialog } from '../features/scanResults/ScanResultsDialog';
+import { ClearGlobalDefaultDialog } from '../features/clearGlobalDefault/ClearGlobalDefaultDialog';
 import { scanExistingIdentities, type ScannedIdentity } from '../ipc/identities';
+import { getGlobalGitConfig, type GlobalGitConfig } from '../ipc/git';
 import { toast } from 'sonner';
 import type { Identity } from '../ipc/identities';
 import { importKey } from '../ipc/sshKeys';
@@ -122,6 +124,14 @@ export function IdentitiesView() {
   const clearGlobalDefault = useGlobalDefaultStore((s) => s.clear);
   const refreshGlobalDefault = useGlobalDefaultStore((s) => s.refresh);
   const [globalDefaultBusy, setGlobalDefaultBusy] = useState(false);
+  // Confirmation dialog for unset. We snapshot the current effective
+  // user.name/email at open-time so the dialog can preview what will
+  // be removed from ~/.gitconfig.
+  const [clearOpen, setClearOpen] = useState(false);
+  const [clearSnapshot, setClearSnapshot] = useState<{
+    userName: string | null;
+    userEmail: string | null;
+  } | null>(null);
   const [home, setHome] = useState('');
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Identity | null>(null);
@@ -284,12 +294,33 @@ export function IdentitiesView() {
     }
   };
 
+  /// Opens the confirmation dialog. Snapshots the current effective
+  /// user.name/email so the user can see what will be removed.
   const handleClearGlobalDefault = async () => {
+    if (globalDefaultBusy) return;
+    let snapshot: { userName: string | null; userEmail: string | null } = {
+      userName: null,
+      userEmail: null,
+    };
+    try {
+      const cfg: GlobalGitConfig = await getGlobalGitConfig();
+      snapshot = { userName: cfg.userName, userEmail: cfg.userEmail };
+    } catch {
+      // If we can't read the gitconfig the dialog will just show
+      // empty preview; the user can still confirm.
+    }
+    setClearSnapshot(snapshot);
+    setClearOpen(true);
+  };
+
+  /// Actual unset, called from the confirmation dialog.
+  const handleClearGlobalDefaultConfirm = async () => {
     if (globalDefaultBusy) return;
     setGlobalDefaultBusy(true);
     try {
       await clearGlobalDefault();
       toast.success(t('identities.globalDefault.cleared'));
+      setClearOpen(false);
     } catch (e) {
       toast.error(String(e));
     } finally {
@@ -307,6 +338,15 @@ export function IdentitiesView() {
           busy={globalDefaultBusy}
           onPick={handlePickGlobalDefault}
           onClear={handleClearGlobalDefault}
+        />
+
+        <ClearGlobalDefaultDialog
+          open={clearOpen}
+          onOpenChange={setClearOpen}
+          userName={clearSnapshot?.userName ?? null}
+          userEmail={clearSnapshot?.userEmail ?? null}
+          busy={globalDefaultBusy}
+          onConfirm={handleClearGlobalDefaultConfirm}
         />
 
         {/* Section break: the global-default picker above is its own

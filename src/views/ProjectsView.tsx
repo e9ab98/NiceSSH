@@ -1,7 +1,7 @@
 import { useEffect, useMemo, useState, useCallback } from 'react';
 import { useTranslation } from 'react-i18next';
 import { open as openDirDialog } from '@tauri-apps/plugin-dialog';
-import { CircleSlash, AlertTriangle, FolderGit2, UserCircle2, MousePointer, type LucideIcon } from 'lucide-react';
+import { CircleSlash, AlertTriangle, FolderGit2, UserCircle2, MousePointer, RefreshCw, type LucideIcon } from 'lucide-react';
 import { Button } from '../components/ui/button';
 import { Badge } from '../components/ui/badge';
 import { ProtocolBadge } from '../components/protocolBadge';
@@ -10,7 +10,7 @@ import { useProjectsStore } from '../store/projects';
 import { useIdentitiesStore, useKeysStore, type SshKeyInfo } from '../store/identities';
 import { useSettingsStore } from '../store/settings';
 import { useGlobalDefaultStore } from '../store/globalDefault';
-import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, gitStatus, initRepo, isGitRepo, type RepoGitConfig, type RepoStatus } from '../ipc/git';
+import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, gitStatus, initRepo, isGitRepo, type IdentitySource, type RepoGitConfig, type RepoStatus } from '../ipc/git';
 import { tryUnlockKey, isKeyEncrypted } from '../ipc/sshAdd';
 import { IdentitySwitcherDialog } from '../features/identitySwitcher/IdentitySwitcherDialog';
 import { RepoAuditDialog } from '../features/repoAudit/RepoAuditDialog';
@@ -26,6 +26,7 @@ import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { resolveImportIdentity } from '../lib/resolveImportIdentity';
 import { isIdentitySynced } from '../lib/isIdentitySynced';
+import { mergeWithGlobalDefault } from '../lib/mergeWithGlobalDefault';
 import type { Identity } from '../ipc/identities';
 // SshKeyInfo type re-exported via identities store
 // (no direct ipc import needed here)
@@ -150,6 +151,10 @@ export function ProjectsView() {
   const [repoConfigs, setRepoConfigs] = useState<Record<string, RepoGitConfig>>({});
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; projectId: string; projectName: string } | null>(null);
   const [adding, setAdding] = useState(false);
+  // When true, the refresh button is disabled and shows a spinner.
+  // Drives `handleRefreshAll` which re-reads projects / identities /
+  // keys / repoConfigs / globalDefault from disk.
+  const [refreshing, setRefreshing] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   // Per-project isGitRepo() result. Drives the 'Not initialized' badge
   // and the Initialize Project button. Refreshed whenever the projects
@@ -185,16 +190,45 @@ export function ProjectsView() {
   }, [projects]);
 
   const refreshRepoConfigs = useCallback(async () => {
+    // Read the global-default pointer from the store directly
+    // (via getState) instead of from a closure variable. This
+    // callback is declared before useGlobalDefaultStore is
+    // called below, so a closure read would be a temporal
+    // dead-zone error. getState() returns the current value
+    // without re-rendering on changes — acceptable because
+    // callers trigger refreshRepoConfigs on demand (button
+    // tap, store change) rather than via reactive deps.
+    const currentGlobalDefaultId = useGlobalDefaultStore.getState().id;
+    const globalDefault = currentGlobalDefaultId
+      ? identities.find((i) => i.id === currentGlobalDefaultId) ?? null
+      : null;
     const out: Record<string, RepoGitConfig> = {};
     for (const p of projects) {
+      let cfg: RepoGitConfig;
       try {
-        out[p.id] = await getRepoGitConfig(p.path);
+        cfg = await getRepoGitConfig(p.path);
       } catch {
-        out[p.id] = { hasConfig: false, userName: null, userEmail: null, sshKeyPath: null, managedByNicessh: false, sshCommandCount: 0, remoteUrl: null, remoteProtocol: null };
+        cfg = { hasConfig: false, userName: null, userEmail: null, userNameSource: 'none', userEmailSource: 'none', sshKeyPath: null, managedByNicessh: false, sshCommandCount: 0, remoteUrl: null, remoteProtocol: null };
+      }
+      // Fill missing userName/userEmail from NiceSSH's recorded
+      // global default identity. The git-side fallback inside
+      // get_repo_git_config only sees ~/.gitconfig + includeIf;
+      // it does NOT know about NiceSSH's UI-level pointer, so we
+      // layer that on here.
+      const merged = mergeWithGlobalDefault(cfg, {
+        globalDefaultId: currentGlobalDefaultId ?? null,
+        globalDefault: globalDefault
+          ? { userName: globalDefault.userName, userEmail: globalDefault.userEmail }
+          : null,
+      });
+      if (merged !== cfg) {
+        out[p.id] = { ...cfg, userName: merged.userName, userEmail: merged.userEmail, userNameSource: merged.userNameSource, userEmailSource: merged.userEmailSource };
+      } else {
+        out[p.id] = cfg;
       }
     }
     setRepoConfigs(out);
-  }, [projects]);
+  }, [projects, identities]);
 
   // Keep the isRepo map in sync with the projects list. We do this in
   // a separate effect (rather than inside refreshRepoConfigs) so that
@@ -209,20 +243,39 @@ export function ProjectsView() {
   }, [refreshKeys]);
 
   useEffect(() => {
+    // Mirror refreshRepoConfigs. We read globalDefaultId via
+    // getState() rather than a closure variable so the effect
+    // can be declared before useGlobalDefaultStore.
+    const currentGlobalDefaultId = useGlobalDefaultStore.getState().id;
+    const globalDefault = currentGlobalDefaultId
+      ? identities.find((i) => i.id === currentGlobalDefaultId) ?? null
+      : null;
     let cancelled = false;
     (async () => {
       const out: Record<string, RepoGitConfig> = {};
       for (const p of projects) {
+        let cfg: RepoGitConfig;
         try {
-          out[p.id] = await getRepoGitConfig(p.path);
+          cfg = await getRepoGitConfig(p.path);
         } catch {
-          out[p.id] = { hasConfig: false, userName: null, userEmail: null, sshKeyPath: null, managedByNicessh: false, sshCommandCount: 0, remoteUrl: null, remoteProtocol: null };
+          cfg = { hasConfig: false, userName: null, userEmail: null, userNameSource: 'none', userEmailSource: 'none', sshKeyPath: null, managedByNicessh: false, sshCommandCount: 0, remoteUrl: null, remoteProtocol: null };
+        }
+        const merged = mergeWithGlobalDefault(cfg, {
+          globalDefaultId: currentGlobalDefaultId ?? null,
+          globalDefault: globalDefault
+            ? { userName: globalDefault.userName, userEmail: globalDefault.userEmail }
+            : null,
+        });
+        if (merged !== cfg) {
+          out[p.id] = { ...cfg, userName: merged.userName, userEmail: merged.userEmail, userNameSource: merged.userNameSource, userEmailSource: merged.userEmailSource };
+        } else {
+          out[p.id] = cfg;
         }
       }
       if (!cancelled) setRepoConfigs(out);
     })();
     return () => { cancelled = true; };
-  }, [projects]);
+  }, [projects, identities]);
 
   const selected = projects.find((p) => p.id === selectedId) ?? null;
   // Refresh the Quick Actions status row for the *selected*
@@ -396,6 +449,33 @@ export function ProjectsView() {
       // RemoteUrlPromptDialog initialUrl plumbing.
       prefillUrl: ssh ?? undefined,
     });
+  };
+
+  /// Re-reads every backing store from disk and re-scans every
+  /// project's .git/config. No project files are written; this is
+  /// a read-only refresh so the right-hand detail panel and the
+  /// list badges reflect the current state of the world.
+  const handleRefreshAll = async () => {
+    if (refreshing) return;
+    setRefreshing(true);
+    try {
+      // Fire all reads in parallel — they don't depend on each other.
+      // refreshRepoConfigs is a useCallback that depends on `projects`,
+      // so we capture it here.
+      await Promise.all([
+        refreshProjects(),
+        refreshIdentities(),
+        refreshKeys(),
+        refreshRepoConfigs(),
+        refreshGlobalDefault(),
+        refreshIsRepo(),
+      ]);
+    } catch {
+      // The individual stores surface their own errors via toast;
+      // we just need to make sure refreshing ends either way.
+    } finally {
+      setRefreshing(false);
+    }
   };
 
   const handleAdd = async () => {
@@ -605,6 +685,20 @@ export function ProjectsView() {
           <Button variant="outline" onClick={() => setAuditOpen(true)}>
             {t('repoAudit.title')}
           </Button>
+          <Button
+            variant="outline"
+            onClick={() => { void handleRefreshAll(); }}
+            disabled={refreshing}
+            aria-label={t('projects.refresh')}
+            title={t('projects.refresh')}
+          >
+            <RefreshCw
+              className={cn(
+                'h-4 w-4',
+                refreshing && 'animate-spin',
+              )}
+            />
+          </Button>
             </div>
             <div className="flex-1 rounded-2xl border border-border bg-bg-1 shadow-card overflow-y-auto">
               {projects.length === 0 ? (
@@ -636,8 +730,48 @@ export function ProjectsView() {
                           <div className="text-sm font-semibold text-text-0 truncate">{p.name}</div>
                           <div className="text-xs text-text-2 truncate font-mono">{p.path}</div>
                         </div>
-                        <Badge variant={d.kind === 'tracked' || d.kind === 'user-only' ? 'success' : d.kind === 'untracked' ? 'warning' : 'default'}>
-                          {d.kind === 'tracked' || d.kind === 'user-only' ? t('projects.badge.bound') : d.kind === 'untracked' ? t('projects.badge.untracked') : t('projects.badge.unbound')}
+                        <Badge
+                          variant={(() => {
+                            if (d.kind === 'untracked') return 'warning';
+                            if (d.kind === 'tracked' || d.kind === 'user-only') {
+                              // Distinguish "bound from project"
+                              // (green) from "bound from global"
+                              // (outline) so the user can see the
+                              // source at a glance in the list.
+                              // Any side coming from git's config chain
+                              // ('global') OR from NiceSSH's recorded
+                              // global default identity ('globalDefault')
+                              // is "not bound to this project" — surface
+                              // it with the outline badge.
+                              const fromGlobal =
+                                cfg?.userNameSource === 'global' ||
+                                cfg?.userEmailSource === 'global' ||
+                                cfg?.userNameSource === 'globalDefault' ||
+                                cfg?.userEmailSource === 'globalDefault';
+                              return fromGlobal ? 'outline' : 'success';
+                            }
+                            return 'default';
+                          })()}
+                        >
+                          {(() => {
+                            if (d.kind === 'untracked') return t('projects.badge.untracked');
+                            if (d.kind === 'tracked' || d.kind === 'user-only') {
+                              // Any side coming from git's config chain
+                              // ('global') OR from NiceSSH's recorded
+                              // global default identity ('globalDefault')
+                              // is "not bound to this project" — surface
+                              // it with the outline badge.
+                              const fromGlobal =
+                                cfg?.userNameSource === 'global' ||
+                                cfg?.userEmailSource === 'global' ||
+                                cfg?.userNameSource === 'globalDefault' ||
+                                cfg?.userEmailSource === 'globalDefault';
+                              return fromGlobal
+                                ? t('projects.badge.boundFromGlobal')
+                                : t('projects.badge.bound');
+                            }
+                            return t('projects.badge.unbound');
+                          })()}
                         </Badge>
                       </li>
                     );
@@ -951,21 +1085,26 @@ function ProjectDetail({ project, detected, keyPath, hasIdentities, repoConfig, 
         <div className="rounded-xl border border-border bg-bg-0 p-3 flex flex-col gap-1.5 text-sm">
           {identity ? (
             <>
-              <KV label={t('projects.detail.name')} value={identity.label} />
-              <KV label={t('projects.detail.email')} value={identity.userEmail || '—'} mono />
-              {keyPath && <KV label={t('projects.detail.key')} value={keyPath} mono />}
-              {identity.matchPath && <KV label={t('projects.match')} value={identity.matchPath} mono />}
+              <KV label={t('projects.detail.name')} value={identity.label} t={t} />
+              <KV label={t('projects.detail.email')} value={identity.userEmail || '—'} mono t={t} />
+              {keyPath && <KV label={t('projects.detail.key')} value={keyPath} mono t={t} />}
+              {identity.matchPath && <KV label={t('projects.match')} value={identity.matchPath} mono t={t} />}
               {repoConfig && (repoConfig.userName || repoConfig.userEmail) && (
                 <>
                   <div className="border-t border-border my-1.5" />
                   {syncState === false ? (
                     // Out of sync: show Git's actual values so the
                     // user can see the disagreement at a glance.
+                    // Each KV carries the source tag so the user
+                    // can tell which side is "project" and which
+                    // is "global fallback".
                     <div className="flex flex-col gap-0.5">
                       {repoConfig.userName && (
                         <KV
                           label={t('projects.detail.userName')}
                           value={repoConfig.userName}
+                          source={repoConfig.userNameSource}
+                          t={t}
                         />
                       )}
                       {repoConfig.userEmail && (
@@ -973,12 +1112,22 @@ function ProjectDetail({ project, detected, keyPath, hasIdentities, repoConfig, 
                           label={t('projects.detail.userEmail')}
                           value={repoConfig.userEmail}
                           mono
+                          source={repoConfig.userEmailSource}
+                          t={t}
                         />
                       )}
                     </div>
                   ) : (
+                    // In sync. Distinguish two flavors of sync:
+                    // both sides project-level (normal case), or
+                    // identity values match what git resolves via
+                    // the global config chain (rare; e.g. user
+                    // bound an identity that itself was sourced
+                    // from global).
                     <p className="text-xs text-text-2">
-                      {t('projects.detail.syncedHint')}
+                      {repoConfig.userNameSource === 'global' || repoConfig.userEmailSource === 'global'
+                        ? t('projects.detail.syncedFromGlobalHint')
+                        : t('projects.detail.syncedHint')}
                     </p>
                   )}
                 </>
@@ -988,12 +1137,23 @@ function ProjectDetail({ project, detected, keyPath, hasIdentities, repoConfig, 
             // HTTPS-style "project-level identity exists but we can't
             // attribute it to a NiceSSH identity" state. Surface what
             // Git itself sees so the user knows who's committing.
+            // Each KV carries the source tag so the user can tell
+            // whether the value is the repo's own or just git's
+            // global fallback (the latter is the "HTTPS but unset"
+            // case where the user never set [user] in the repo).
             <>
-              <KV label={t('projects.detail.name')} value={repoConfig.userName ?? '—'} />
+              <KV
+                label={t('projects.detail.name')}
+                value={repoConfig.userName ?? '—'}
+                source={repoConfig.userNameSource}
+                t={t}
+              />
               <KV
                 label={t('projects.detail.email')}
                 value={repoConfig.userEmail ?? '—'}
                 mono
+                source={repoConfig.userEmailSource}
+                t={t}
               />
               <p className="text-xs text-text-2 mt-1">
                 {t('projects.detail.userOnlyNote')}
@@ -1147,10 +1307,28 @@ function SectionLabel({ children }: { children: React.ReactNode }) {
   return <div className="text-[11px] font-bold uppercase tracking-wider text-text-2 mb-1.5">{children}</div>;
 }
 
-function KV({ label, value, mono = false }: { label: string; value: string | null; mono?: boolean }) {
+function KV({
+  label,
+  value,
+  mono = false,
+  source,
+  t,
+}: {
+  label: string;
+  value: string | null;
+  mono?: boolean;
+  /// When set, render a small tag next to the label identifying
+  /// where the value came from (project config vs git's config
+  /// chain). Drives the visual distinction the user asked for.
+  source?: IdentitySource;
+  t: (k: string) => string;
+}) {
   return (
     <div className="flex justify-between gap-2 items-baseline">
-      <span className="text-text-1 shrink-0 text-xs">{label}</span>
+      <span className="text-text-1 shrink-0 text-xs flex items-center gap-1.5">
+        {label}
+        {source && <SourceTag source={source} t={t} />}
+      </span>
       {value ? (
         <Tooltip>
           <TooltipTrigger asChild>
@@ -1162,5 +1340,46 @@ function KV({ label, value, mono = false }: { label: string; value: string | nul
         <span className="text-text-2">—</span>
       )}
     </div>
+  );
+}
+
+/// Tiny "(项目)" / "(全局)" tag rendered next to a KV label so
+/// the user can tell at a glance whether the value is the repo's
+/// own or just what git would fall back to. Only renders for
+/// 'project' and 'global'; 'none' is dropped (no value to tag).
+function SourceTag({ source, t }: { source: IdentitySource; t: (k: string) => string }) {
+  if (source === 'none') return null;
+  // Three states with distinct visuals:
+  //   - project      -> blue "项目"       (own .git/config)
+  //   - global       -> yellow "全局"      (git's config chain, ~/.gitconfig or includeIf)
+  //   - globalDefault -> gray "NiceSSH 默认" (NiceSSH pointer; not on disk)
+  const label =
+    source === 'project'
+      ? t('projects.sourceTag.project')
+      : source === 'global'
+        ? t('projects.sourceTag.global')
+        : t('projects.sourceTag.globalDefault');
+  const tip =
+    source === 'project'
+      ? t('projects.sourceTag.projectTip')
+      : source === 'global'
+        ? t('projects.sourceTag.globalTip')
+        : t('projects.sourceTag.globalDefaultTip');
+  const palette =
+    source === 'project'
+      ? 'bg-brand-soft text-brand-strong [[data-theme=dark]_&]:text-[#93c5fd]'
+      : source === 'global'
+        ? 'bg-warning-soft text-warning-strong [[data-theme=dark]_&]:text-[#fcd34d]'
+        : 'bg-bg-1 text-text-1 border border-border';
+  return (
+    <span
+      className={cn(
+        'inline-block px-1.5 py-0.5 rounded text-[10px] font-medium leading-none',
+        palette,
+      )}
+      title={tip}
+    >
+      {label}
+    </span>
   );
 }

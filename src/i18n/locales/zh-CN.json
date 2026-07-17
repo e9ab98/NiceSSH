@@ -74,7 +74,8 @@
       "bound": "已绑定",
       "unbound": "无身份",
       "untracked": "未追踪",
-      "userOnly": "已设置 user.name/email"
+      "userOnly": "已设置 user.name/email",
+      "boundFromGlobal": "已绑定（来自全局）"
     },
     "detail": {
       "identity": "Git 身份",
@@ -93,7 +94,8 @@
       "notARepoTitle": "此目录不是 git 仓库",
       "notARepoBody": "选择一个身份后，NiceSSH 会在此目录运行 git init 并创建初始提交。",
       "userOnlyNote": "仓库内已有 user.name/email，但未关联到 NiceSSH 身份；如需管理可点击下方「绑定身份」。",
-      "syncedHint": "已同步到 .git/config（提交将使用以上信息）"
+      "syncedHint": "已同步到 .git/config（提交将使用以上信息）",
+      "syncedFromGlobalHint": "已同步（值来自 git 全局配置链，仓库未独立记录）"
     },
     "action": {
       "switch": "切换身份",
@@ -120,7 +122,16 @@
     "initSuccess": "项目已初始化",
     "initNoIdentity": "请先在身份管理中创建一个身份",
     "outOfSyncBadge": ".git/config 与绑定身份不一致",
-    "outOfSyncTooltip": "NiceSSH 显示的身份信息与仓库 .git/config 实际内容不一致。提交时使用的将是 .git/config 中的值，请重新绑定以同步。"
+    "outOfSyncTooltip": "NiceSSH 显示的身份信息与仓库 .git/config 实际内容不一致。提交时使用的将是 .git/config 中的值，请重新绑定以同步。",
+    "refresh": "刷新所有项目配置",
+    "sourceTag": {
+      "project": "项目",
+      "projectTip": "值来自仓库自己的 .git/config",
+      "global": "全局",
+      "globalTip": "值来自 git 配置链（~/.gitconfig 或 includeIf），仓库未记录",
+      "globalDefault": "NiceSSH 默认",
+      "globalDefaultTip": "值来自 NiceSSH 设置的全局默认身份（未写入 .git/config）"
+    }
   },
   "identities": {
     "title": "身份",
@@ -493,5 +504,11 @@
       "behind": "落后 {{count}} 个提交",
       "noRemote": "未配置远端"
     }
+  },
+  "clearGlobalDefault": {
+    "title": "取消全局默认身份",
+    "description": "NiceSSH 会从 ~/.gitconfig 中删除 [user] 段（包括你可能手设的 name/email）。",
+    "rollbackHint": "误删可打开历史回滚恢复。",
+    "confirm": "确认取消"
   }
 }
