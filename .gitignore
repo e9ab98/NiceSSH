@@ -9,7 +9,7 @@ build/
 src/**/*.js
 src/**/*.js.map
 *.tsbuildinfo
-
+.pnpm-store/
 # Brainstorming & local working files
 .superpowers/
 docs/
