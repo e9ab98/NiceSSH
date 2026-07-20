@@ -5,6 +5,7 @@ import {
   setGlobalDefaultIdentity,
   unsetGlobalDefaultIdentity,
 } from '../ipc/git';
+import { refreshBus } from '../lib/refreshBus';
 
 /**
  * Centralised store for the **advisory** global-default pointer
@@ -66,6 +67,11 @@ export const useGlobalDefaultStore = create<State>()(subscribeWithSelector((set,
       set({ id: previous, error: e instanceof Error ? e.message : String(e) });
       throw e;
     }
+    // The pointer changed → every project's
+    // `mergeWithGlobalDefault` output may shift (the identity
+    // backing the fallback just changed). ProjectsView subscribes
+    // and re-reads each repo's .git/config in response.
+    refreshBus.emit({ kind: 'global-default-changed' });
   },
   clear: async () => {
     const previous = get().id;
@@ -76,5 +82,9 @@ export const useGlobalDefaultStore = create<State>()(subscribeWithSelector((set,
       set({ id: previous, error: e instanceof Error ? e.message : String(e) });
       throw e;
     }
+    // See set() above — same rationale. Projects that were
+    // relying on the fallback identity need their repo config
+    // re-merged against the (now absent) global default.
+    refreshBus.emit({ kind: 'global-default-changed' });
   },
-}));
+})));

@@ -6,6 +6,7 @@ import {
   updateIdentity as apiUpdate,
   deleteIdentity as apiDelete,
 } from '../ipc/identities';
+import { refreshBus } from '../lib/refreshBus';
 
 interface State {
   items: Identity[];
@@ -36,15 +37,30 @@ export const useIdentitiesStore = create<State>((set) => ({
   create: async (i) => {
     const created = await apiCreate(i);
     set((s) => ({ items: [...s.items, created] }));
+    // A brand-new identity is not yet referenced by any project,
+    // so no project's repo config needs to be re-read. Subscribers
+    // that want to refresh (e.g. to show the new identity in the
+    // bind dialog) can listen to zustand store changes directly.
     return created;
   },
   update: async (id, i) => {
     const updated = await apiUpdate(id, i);
     set((s) => ({ items: s.items.map((x) => (x.id === id ? updated : x)) }));
+    // The identity's userName/userEmail may have changed, which
+    // shifts `mergeWithGlobalDefault` output for any project
+    // that falls back to it. ProjectsView subscribes and decides
+    // whether to refresh one project (if bound) or all projects
+    // (if this identity IS the global default).
+    refreshBus.emit({ kind: 'identity-changed', identityId: id });
   },
   remove: async (id, opts) => {
     await apiDelete(id, opts);
     set((s) => ({ items: s.items.filter((x) => x.id !== id) }));
+    // Any project bound to the removed identity has a stale
+    // reference. ProjectsView handles the same way as
+    // `identity-changed` (filter by identityId; if this identity
+    // was the global default, refresh everything).
+    refreshBus.emit({ kind: 'identity-removed', identityId: id });
   },
 }));
 

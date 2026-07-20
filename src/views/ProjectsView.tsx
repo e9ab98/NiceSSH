@@ -10,7 +10,8 @@ import { useProjectsStore } from '../store/projects';
 import { useIdentitiesStore, useKeysStore, type SshKeyInfo } from '../store/identities';
 import { useSettingsStore } from '../store/settings';
 import { useGlobalDefaultStore } from '../store/globalDefault';
-import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, gitStatus, initRepo, isGitRepo, type IdentitySource, type RepoGitConfig, type RepoStatus } from '../ipc/git';
+import { useRepoConfigsStore } from '../store/repoConfigs';
+import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, gitStatus, initRepo, type IdentitySource, type RepoGitConfig, type RepoStatus } from '../ipc/git';
 import { tryUnlockKey, isKeyEncrypted } from '../ipc/sshAdd';
 import { IdentitySwitcherDialog } from '../features/identitySwitcher/IdentitySwitcherDialog';
 import { RepoAuditDialog } from '../features/repoAudit/RepoAuditDialog';
@@ -26,7 +27,6 @@ import { toast } from 'sonner';
 import { cn } from '../lib/utils';
 import { resolveImportIdentity } from '../lib/resolveImportIdentity';
 import { isIdentitySynced } from '../lib/isIdentitySynced';
-import { mergeWithGlobalDefault } from '../lib/mergeWithGlobalDefault';
 import type { Identity } from '../ipc/identities';
 // SshKeyInfo type re-exported via identities store
 // (no direct ipc import needed here)
@@ -143,12 +143,16 @@ export function ProjectsView() {
   const recentlyUnlocked = useSettingsStore((s) => s.recentlyUnlockedKeys);
   const privatePathFor = (identity: Identity) => keys.find((key) => key.id === identity.sshKeyId)?.privatePath ?? '';
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
+  // Cross-mount cache lives in useRepoConfigsStore so navigating
+  // to /identities and back doesn't wipe the data. setSelectedId
+  // is a store action so the selection survives the same way.
+  const selectedId = useRepoConfigsStore((s) => s.selectedId);
+  const setSelectedId = useRepoConfigsStore((s) => s.setSelectedId);
   const [switcherOpen, setSwitcherOpen] = useState(false);
   const [testerOpen, setTesterOpen] = useState(false);
   const [passOpen, setPassOpen] = useState(false);
   const [pendingIdentityId, setPendingIdentityId] = useState<string | null>(null);
-  const [repoConfigs, setRepoConfigs] = useState<Record<string, RepoGitConfig>>({});
+  const repoConfigs = useRepoConfigsStore((s) => s.repoConfigs);
   const [contextMenu, setContextMenu] = useState<{ x: number; y: number; projectId: string; projectName: string } | null>(null);
   const [adding, setAdding] = useState(false);
   // When true, the refresh button is disabled and shows a spinner.
@@ -157,9 +161,10 @@ export function ProjectsView() {
   const [refreshing, setRefreshing] = useState(false);
   const [auditOpen, setAuditOpen] = useState(false);
   // Per-project isGitRepo() result. Drives the 'Not initialized' badge
-  // and the Initialize Project button. Refreshed whenever the projects
-  // list changes or after a successful init_repo call.
-  const [isRepoMap, setIsRepoMap] = useState<Record<string, boolean>>({});
+  // and the Initialize Project button. Lives in useRepoConfigsStore
+  // alongside `repoConfigs` so the two caches stay in sync (one
+  // bus subscription writes to both).
+  const isRepoMap = useRepoConfigsStore((s) => s.isRepoMap);
   // When set, points at a project that the user wants to initialize.
   // The IdentitySwitcherDialog reuses its `switcherOpen` state to ask
   // for an identity; `initTargetId` carries the project context so we
@@ -181,101 +186,33 @@ export function ProjectsView() {
   // ProjectDetail's local state so dialog success callbacks can
   // trigger a refresh without a prop-drilling rabbit hole.
   const [commitsForSelected, setCommitsForSelected] = useState<{ hash: string; subject: string }[]>([]);
-  const refreshIsRepo = useCallback(async () => {
-    const out: Record<string, boolean> = {};
-    for (const p of projects) {
-      try { out[p.id] = await isGitRepo(p.path); } catch { out[p.id] = false; }
-    }
-    setIsRepoMap(out);
-  }, [projects]);
-
-  const refreshRepoConfigs = useCallback(async () => {
-    // Read the global-default pointer from the store directly
-    // (via getState) instead of from a closure variable. This
-    // callback is declared before useGlobalDefaultStore is
-    // called below, so a closure read would be a temporal
-    // dead-zone error. getState() returns the current value
-    // without re-rendering on changes — acceptable because
-    // callers trigger refreshRepoConfigs on demand (button
-    // tap, store change) rather than via reactive deps.
-    const currentGlobalDefaultId = useGlobalDefaultStore.getState().id;
-    const globalDefault = currentGlobalDefaultId
-      ? identities.find((i) => i.id === currentGlobalDefaultId) ?? null
-      : null;
-    const out: Record<string, RepoGitConfig> = {};
-    for (const p of projects) {
-      let cfg: RepoGitConfig;
-      try {
-        cfg = await getRepoGitConfig(p.path);
-      } catch {
-        cfg = { hasConfig: false, userName: null, userEmail: null, userNameSource: 'none', userEmailSource: 'none', sshKeyPath: null, managedByNicessh: false, sshCommandCount: 0, remoteUrl: null, remoteProtocol: null };
-      }
-      // Fill missing userName/userEmail from NiceSSH's recorded
-      // global default identity. The git-side fallback inside
-      // get_repo_git_config only sees ~/.gitconfig + includeIf;
-      // it does NOT know about NiceSSH's UI-level pointer, so we
-      // layer that on here.
-      const merged = mergeWithGlobalDefault(cfg, {
-        globalDefaultId: currentGlobalDefaultId ?? null,
-        globalDefault: globalDefault
-          ? { userName: globalDefault.userName, userEmail: globalDefault.userEmail }
-          : null,
-      });
-      if (merged !== cfg) {
-        out[p.id] = { ...cfg, userName: merged.userName, userEmail: merged.userEmail, userNameSource: merged.userNameSource, userEmailSource: merged.userEmailSource };
-      } else {
-        out[p.id] = cfg;
-      }
-    }
-    setRepoConfigs(out);
-  }, [projects, identities]);
-
-  // Keep the isRepo map in sync with the projects list. We do this in
-  // a separate effect (rather than inside refreshRepoConfigs) so that
-  // the dependency arrays of useCallbacks above stay accurate.
-  useEffect(() => { void refreshIsRepo(); }, [refreshIsRepo]);
+  // `refreshRepoConfigs` and `refreshIsRepo`
+  // and the `refreshBus` subscription all live on `useRepoConfigsStore`
+  // now. The store is a singleton, so the bus subscription persists
+  // across ProjectsView unmounts (tab switches) and the cache (repoConfigs
+  // / isRepoMap / selectedId) survives with it. The view only needs to
+  // trigger an initial fetch on mount in case the cache is empty (e.g.
+  // first visit after app start) — see the effect below.
+  const refreshRepoConfigs = useRepoConfigsStore((s) => s.refreshRepoConfigs);
+  const refreshIsRepo = useRepoConfigsStore((s) => s.refreshIsRepo);
 
 
+  // Initial-mount fetch. The store's cache survives tab switches,
+  // so on a return visit we should NOT re-fetch everything — just
+  // trust whatever's in the store and render. The only case we need
+  // to populate is when the cache is empty: that's the first visit
+  // after app start, OR the user has just removed every project
+  // (cache drained to {}).
   useEffect(() => {
-    refreshProjects();
-    refreshIdentities();
-    void refreshKeys();
-  }, [refreshKeys]);
+    const state = useRepoConfigsStore.getState();
+    if (Object.keys(state.repoConfigs).length === 0) {
+      void state.refreshRepoConfigs();
+    }
+    if (Object.keys(state.isRepoMap).length === 0) {
+      void state.refreshIsRepo();
+    }
+  }, []);
 
-  useEffect(() => {
-    // Mirror refreshRepoConfigs. We read globalDefaultId via
-    // getState() rather than a closure variable so the effect
-    // can be declared before useGlobalDefaultStore.
-    const currentGlobalDefaultId = useGlobalDefaultStore.getState().id;
-    const globalDefault = currentGlobalDefaultId
-      ? identities.find((i) => i.id === currentGlobalDefaultId) ?? null
-      : null;
-    let cancelled = false;
-    (async () => {
-      const out: Record<string, RepoGitConfig> = {};
-      for (const p of projects) {
-        let cfg: RepoGitConfig;
-        try {
-          cfg = await getRepoGitConfig(p.path);
-        } catch {
-          cfg = { hasConfig: false, userName: null, userEmail: null, userNameSource: 'none', userEmailSource: 'none', sshKeyPath: null, managedByNicessh: false, sshCommandCount: 0, remoteUrl: null, remoteProtocol: null };
-        }
-        const merged = mergeWithGlobalDefault(cfg, {
-          globalDefaultId: currentGlobalDefaultId ?? null,
-          globalDefault: globalDefault
-            ? { userName: globalDefault.userName, userEmail: globalDefault.userEmail }
-            : null,
-        });
-        if (merged !== cfg) {
-          out[p.id] = { ...cfg, userName: merged.userName, userEmail: merged.userEmail, userNameSource: merged.userNameSource, userEmailSource: merged.userEmailSource };
-        } else {
-          out[p.id] = cfg;
-        }
-      }
-      if (!cancelled) setRepoConfigs(out);
-    })();
-    return () => { cancelled = true; };
-  }, [projects, identities]);
 
   const selected = projects.find((p) => p.id === selectedId) ?? null;
   // Refresh the Quick Actions status row for the *selected*
