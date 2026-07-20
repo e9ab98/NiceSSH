@@ -14,7 +14,6 @@
 //! Visibility is `pub(crate)` for every helper.
 
 use crate::config_store::Identity;
-use crate::paths;
 
 pub(crate) struct GitConfigSection {
     /// Section name (e.g. "user", "core", `includeIf "gitdir:~/work/"`)
@@ -280,7 +279,6 @@ pub(crate) fn strip_managed_block(raw: &str) -> String {
     }
     let lines: Vec<&str> = raw.lines().collect();
     let mut sections: Vec<Section> = Vec::new();
-    let mut i = 0;
     // File head: any lines before the first [section] header.
     let mut head_end = 0;
     while head_end < lines.len() {
@@ -293,7 +291,7 @@ pub(crate) fn strip_managed_block(raw: &str) -> String {
     if head_end > 0 {
         sections.push(Section { start: 0, header: None, body: (0..head_end).collect() });
     }
-    i = head_end;
+    let mut i = head_end;
     while i < lines.len() {
         let t = lines[i].trim_start();
         let t_end = lines[i].trim_end();
@@ -616,20 +614,6 @@ mod rewrite_tests {
 #[cfg(test)]
 mod https_splice_tests {
     use super::*;
-    use crate::config_store::Identity;
-
-    fn ident_user_only() -> Identity {
-        Identity {
-            id: "i_https".into(),
-            label: "alice".into(),
-            user_name: "Alice".into(),
-            user_email: "alice@co.com".into(),
-            ssh_key_id: None,
-            match_path: None,
-            host_alias: None,
-            git_host: None,
-        }
-    }
 
     #[test]
     fn splice_user_only_replaces_user_block_keeps_core_intact() {

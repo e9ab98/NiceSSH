@@ -18,7 +18,6 @@ use crate::error::{AppError, Result};
 use crate::git::io;
 use crate::git::splice;
 use crate::git_config;
-use crate::paths;
 
 
 /// Outcome of `apply_identity_to_repo` that the UI needs to know in
@@ -171,7 +170,7 @@ mod bind_tests {
     use crate::test_helpers::with_temp_home;
     use std::fs;
 
-    fn ident(label: &str, name: &str, email: &str, key: &str) -> Identity {
+    fn ident(label: &str, name: &str, email: &str) -> Identity {
         Identity {
             id: format!("id_{label}"),
             label: label.into(),
@@ -224,7 +223,7 @@ mod bind_tests {
         // block must produce exactly one [user] block and one sshCommand
         // line, with the OLD identity's name/email gone.
         with_temp_home("bind-ssh-replace", || {
-            let id_new = ident("new", "New", "new@x", "~/.ssh/id_new");
+            let id_new = ident("new", "New", "new@x");
             let repo = home().join("repo");
             write_repo_config(&repo,
                 "[remote \"origin\"]\n    url = git@github.com:u/r.git\n    fetch = +refs/heads/*:refs/remotes/origin/*\n                 [user]\n    name = Old\n    email = old@x.com\n[core]\n    sshCommand = ssh -i ~/.ssh/old\n");
@@ -247,7 +246,7 @@ mod bind_tests {
         // re-applying the same identity twice must NOT pile up duplicate
         // [user] blocks or duplicate sshCommand lines.
         with_temp_home("bind-ssh-nodup", || {
-            let id = ident("alice", "Alice", "a@x", "~/.ssh/id_alice");
+            let id = ident("alice", "Alice", "a@x");
             let repo = home().join("repo");
             write_repo_config(&repo,
                 "[remote \"origin\"]\n    url = git@github.com:u/r.git\n    fetch = +refs/heads/*:refs/remotes/origin/*\n                 [user]\n    name = X\n    email = x@y\n[core]\n    sshCommand = ssh -i ~/.ssh/k1\n");
@@ -268,7 +267,7 @@ mod bind_tests {
         // applying an identity to an HTTPS-bound repo must write the
         // [user] block but must NOT add a [core] sshCommand line.
         with_temp_home("bind-https-user-only", || {
-            let id = ident("alice", "Alice", "a@x", "~/.ssh/id_alice");
+            let id = ident("alice", "Alice", "a@x");
             let repo = home().join("repo");
             write_repo_config(&repo,
                 "[remote \"origin\"]\n    url = https://github.com/u/r.git\n[user]\n    name = X\n    email = x@y\n");
@@ -291,7 +290,7 @@ mod bind_tests {
         // a repo with no [remote ...] block must not be modified; the
         // UI is expected to prompt the user for a URL and retry.
         with_temp_home("bind-needs-remote", || {
-            let id = ident("alice", "Alice", "a@x", "~/.ssh/id_alice");
+            let id = ident("alice", "Alice", "a@x");
             let repo = home().join("repo");
             let before = "[user]\n    name = X\n    email = x@y\n[core]\n    repositoryformatversion = 0\n";
             write_repo_config(&repo, before);

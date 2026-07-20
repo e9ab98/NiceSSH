@@ -42,6 +42,7 @@ fn appconfig_current_version_serializes() {
             path: "/tmp/repo".into(),
             identity_id: Some("id_work".into()),
         }],
+        global_default_identity_id: None,
     };
     let json = serde_json::to_string(&cfg).unwrap();
     assert!(json.contains("id_work"));

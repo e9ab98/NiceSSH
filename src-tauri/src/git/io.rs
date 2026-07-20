@@ -15,7 +15,7 @@ use std::path::Path;
 use crate::config_store::{self, Identity};
 use crate::error::{AppError, Result};
 use crate::git::splice;
-use crate::{history, paths};
+use crate::history;
 
 /// Read a repo's `.git/config`, splice the new identity into it, record
 /// the change in history, and write the result back atomically.
@@ -299,7 +299,7 @@ mod io_tests {
     use crate::test_helpers::with_temp_home;
     use std::fs;
 
-    fn ident(label: &str, name: &str, email: &str, key: &str) -> Identity {
+    fn ident(label: &str, name: &str, email: &str) -> Identity {
         Identity {
             id: format!("id_{label}"),
             label: label.into(),
@@ -331,7 +331,7 @@ mod io_tests {
         // apply_ssh_style_does_not_duplicate_user_block, exercised one
         // level closer to the splice helpers.
         with_temp_home("io-write-idempotent", || {
-            let id = ident("alice", "Alice", "a@x", "~/.ssh/id_alice");
+            let id = ident("alice", "Alice", "a@x");
             let mut cfg = crate::config_store::read().unwrap();
             cfg.ssh_keys.push(crate::config_store::SshKey { id: id.ssh_key_id.clone().unwrap(), name: "alice".into(), private_path: "~/.ssh/id_alice".into(), public_path: None, key_type: None, fingerprint: None, comment: None });
             crate::config_store::write_snapshot(&cfg, "test", "fixture").unwrap();
@@ -361,7 +361,7 @@ mod io_tests {
             // (the IO wrapper) directly — it looks up the project by
             // id and resolves its bound identity.
             use crate::config_store::{AppConfig, Project, CURRENT_VERSION};
-            let id = ident("alice", "Alice", "a@x", "~/.ssh/id_alice");
+            let id = ident("alice", "Alice", "a@x");
             let repo = home().join("repo");
             write_repo_config(&repo,
                 "# nicessh-managed\n[user]\n    name = Old\n    email = o@x\n\
@@ -422,7 +422,7 @@ mod io_tests {
         // re-emits the sshCommand from the bound identity, so the
         // scrub is not destructive.
         with_temp_home("io-user-only-scrubs-sshcmd", || {
-            let id = ident("alice", "Alice", "a@x", "~/.ssh/id_alice");
+            let id = ident("alice", "Alice", "a@x");
             let repo = home().join("repo");
             write_repo_config(&repo,
                 "[user]\n    name = Old\n    email = o@x\n[core]\n    sshCommand = ssh -i ~/.ssh/LEGACY\n");
