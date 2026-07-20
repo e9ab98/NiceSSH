@@ -55,6 +55,55 @@ jobs:
     steps:
       - name: Checkout
         uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Generate release notes
+        id: changelog
+        shell: bash
+        env:
+          CURRENT_TAG: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+
+          git fetch --tags --force
+          previous_tag=$(git describe --tags --abbrev=0 "${CURRENT_TAG}^" 2>/dev/null || true)
+
+          changelog_section=""
+          if [ -f CHANGELOG.md ]; then
+            version="${CURRENT_TAG#v}"
+            changelog_section=$(awk -v version="$version" '
+              $0 ~ "^## [[]" { in_section = 0 }
+              $0 ~ "^## [[]" version "[]]" { in_section = 1; next }
+              /^## [[]/ && in_section { in_section = 0 }
+              in_section
+            ' CHANGELOG.md)
+          fi
+
+          {
+            if [ -n "$changelog_section" ]; then
+              printf '%s\n\n' "$changelog_section"
+            fi
+
+            printf '### Commits\n\n'
+            if [ -n "$previous_tag" ]; then
+              git log -n 100 "${previous_tag}..${CURRENT_TAG}" \
+                --pretty=format:'- [`%h`]('$GITHUB_SERVER_URL'/'$GITHUB_REPOSITORY'/commit/%H) %s'
+              printf '\n\n**Full Changelog**: https://github.com/%s/compare/%s...%s\n' \
+                "$GITHUB_REPOSITORY" "$previous_tag" "$CURRENT_TAG"
+            else
+              git log -n 100 "$CURRENT_TAG" \
+                --pretty=format:'- [`%h`]('$GITHUB_SERVER_URL'/'$GITHUB_REPOSITORY'/commit/%H) %s'
+              printf '\n\n_First tagged release of this line._\n'
+            fi
+          } > release-notes.md
+
+          delimiter="RELEASE_NOTES_$(git rev-parse --short HEAD)"
+          {
+            printf 'body<<%s\n' "$delimiter"
+            cat release-notes.md
+            printf '%s\n' "$delimiter"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
@@ -134,7 +183,7 @@ jobs:
         with:
           tagName: ${{ github.ref_name }}
           releaseName: "NiceSSH ${{ github.ref_name }}"
-          releaseBody: "See CHANGELOG.md for ${{ github.ref_name }}. Auto-built by tauri-action."
+          releaseBody: ${{ steps.changelog.outputs.body }}
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }} ${{ matrix.bundler_args }}

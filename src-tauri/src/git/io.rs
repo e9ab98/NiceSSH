@@ -333,6 +333,13 @@ mod io_tests {
         with_temp_home("io-write-idempotent", || {
             let id = ident("alice", "Alice", "a@x");
             let mut cfg = crate::config_store::read().unwrap();
+            // write_repo_gitconfig -> identity_private_path looks up the SSH
+            // key by id from cfg.ssh_keys. reconcile_orphan_ssh_keys (run by
+            // every config_store::read) prunes entries that no identity
+            // references AND whose private-key file is missing on disk — so
+            // we must register the referencing identity here, otherwise the
+            // key would be dropped on the read inside write_repo_gitconfig.
+            cfg.identities.push(id.clone());
             cfg.ssh_keys.push(crate::config_store::SshKey { id: id.ssh_key_id.clone().unwrap(), name: "alice".into(), private_path: "~/.ssh/id_alice".into(), public_path: None, key_type: None, fingerprint: None, comment: None });
             crate::config_store::write_snapshot(&cfg, "test", "fixture").unwrap();
             let repo = home().join("repo");
