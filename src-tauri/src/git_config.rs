@@ -120,7 +120,7 @@ fn gitdir_matches(gitdir: &str, project_path: &str) -> bool {
     // Expand leading ~/
     let g = if let Some(rest) = g.strip_prefix("~/") {
         if let Ok(home) = paths::home_dir() {
-            return rest == "" || project_path.starts_with(&format!("{}/", home.join(rest).to_string_lossy()));
+            return rest.is_empty() || project_path.starts_with(&format!("{}/", home.join(rest).to_string_lossy()));
         }
         return false;
     } else if g == "~" {

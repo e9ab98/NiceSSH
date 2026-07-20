@@ -522,7 +522,7 @@ pub(crate) fn remove_user_section(raw: &str) -> String {
     for s in sections {
         // Case-insensitive match on the section name so
         // `[User]` / `[USER]` are also caught.
-        if s.name.trim().to_ascii_lowercase() == "user" {
+        if s.name.trim().eq_ignore_ascii_case("user") {
             removed = true;
             continue;
         }

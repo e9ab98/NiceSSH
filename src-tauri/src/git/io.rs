@@ -198,7 +198,7 @@ pub(crate) fn clean_repo_gitconfig(project_id: String) -> Result<()> {
     // every writer agrees).
     let remote_url = extract_first_remote_url(&raw);
     let protocol = remote_url.as_deref().map(crate::git_config::classify_remote_url);
-    let emit_sshcommand = crate::git::protocol::should_emit_sshcommand_for_protocol(protocol.as_deref());
+    let emit_sshcommand = crate::git::protocol::should_emit_sshcommand_for_protocol(protocol);
     // Keep sections that are clearly git's own: [core] (only the
     // housekeeping keys git writes), [remote "..."], [branch "..."].
     // Drop everything else (managed blocks, anonymous user/core
@@ -211,7 +211,7 @@ pub(crate) fn clean_repo_gitconfig(project_id: String) -> Result<()> {
         if let Some(rest) = trimmed.strip_prefix('[').and_then(|s| s.strip_suffix(']')) {
             // Flush previous section.
             if let Some(name) = current.take() {
-                flush_kept_section(&name, &mut current_lines, &mut kept);
+                flush_kept_section(&name, &current_lines, &mut kept);
             }
             current = Some(rest.trim().to_string());
             current_lines.clear();
@@ -220,7 +220,7 @@ pub(crate) fn clean_repo_gitconfig(project_id: String) -> Result<()> {
         }
     }
     if let Some(name) = current {
-        flush_kept_section(&name, &mut current_lines, &mut kept);
+        flush_kept_section(&name, &current_lines, &mut kept);
     }
     let prefix = if kept.is_empty() {
         String::new()

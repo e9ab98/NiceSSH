@@ -227,7 +227,7 @@ mod bind_tests {
             let repo = home().join("repo");
             write_repo_config(&repo,
                 "[remote \"origin\"]\n    url = git@github.com:u/r.git\n    fetch = +refs/heads/*:refs/remotes/origin/*\n                 [user]\n    name = Old\n    email = old@x.com\n[core]\n    sshCommand = ssh -i ~/.ssh/old\n");
-            write_app_config(&home(), &[id_new.clone()], &[("proj1".into(), repo.to_string_lossy().to_string())]);
+            write_app_config(&home(), std::slice::from_ref(&id_new), &[("proj1".into(), repo.to_string_lossy().to_string())]);
             let outcome = apply_identity_to_repo("proj1".into(), id_new.id.clone()).unwrap();
             assert_eq!(outcome, BindOutcome::SshStyle);
             let after = fs::read_to_string(repo.join(".git/config")).unwrap();
@@ -250,7 +250,7 @@ mod bind_tests {
             let repo = home().join("repo");
             write_repo_config(&repo,
                 "[remote \"origin\"]\n    url = git@github.com:u/r.git\n    fetch = +refs/heads/*:refs/remotes/origin/*\n                 [user]\n    name = X\n    email = x@y\n[core]\n    sshCommand = ssh -i ~/.ssh/k1\n");
-            write_app_config(&home(), &[id.clone()], &[("proj1".into(), repo.to_string_lossy().to_string())]);
+            write_app_config(&home(), std::slice::from_ref(&id), &[("proj1".into(), repo.to_string_lossy().to_string())]);
             apply_identity_to_repo("proj1".into(), id.id.clone()).unwrap();
             // First apply (success path verified below)
             apply_identity_to_repo("proj1".into(), id.id.clone()).unwrap();
@@ -271,7 +271,7 @@ mod bind_tests {
             let repo = home().join("repo");
             write_repo_config(&repo,
                 "[remote \"origin\"]\n    url = https://github.com/u/r.git\n[user]\n    name = X\n    email = x@y\n");
-            write_app_config(&home(), &[id.clone()], &[("proj1".into(), repo.to_string_lossy().to_string())]);
+            write_app_config(&home(), std::slice::from_ref(&id), &[("proj1".into(), repo.to_string_lossy().to_string())]);
             let outcome = apply_identity_to_repo("proj1".into(), id.id.clone()).unwrap();
             assert_eq!(outcome, BindOutcome::UserOnly);
             let after = fs::read_to_string(repo.join(".git/config")).unwrap();
@@ -294,7 +294,7 @@ mod bind_tests {
             let repo = home().join("repo");
             let before = "[user]\n    name = X\n    email = x@y\n[core]\n    repositoryformatversion = 0\n";
             write_repo_config(&repo, before);
-            write_app_config(&home(), &[id.clone()], &[("proj1".into(), repo.to_string_lossy().to_string())]);
+            write_app_config(&home(), std::slice::from_ref(&id), &[("proj1".into(), repo.to_string_lossy().to_string())]);
             let outcome = apply_identity_to_repo("proj1".into(), id.id.clone()).unwrap();
             assert_eq!(outcome, BindOutcome::NeedsRemote);
             let after = fs::read_to_string(repo.join(".git/config")).unwrap();

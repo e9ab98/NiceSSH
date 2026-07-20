@@ -37,6 +37,7 @@ fn ensure_log_file() -> Result<std::path::PathBuf> {
         let mut f = fs::OpenOptions::new()
             .create(true)
             .write(true)
+            .truncate(false)
             .open(&path)
             .map_err(|e| AppError::Io(format!("create log file: {}", e)))?;
         f.write_all(b"").map_err(|e| AppError::Io(e.to_string()))?;
@@ -55,7 +56,7 @@ pub fn read_log_tail(lines: u32) -> Result<String> {
     if !path.exists() {
         return Ok(String::new());
     }
-    let cap = lines.min(MAX_TAIL_LINES).max(1);
+    let cap = lines.clamp(1, MAX_TAIL_LINES);
 
     let mut file = fs::File::open(&path).map_err(|e| AppError::Io(e.to_string()))?;
     let total = file.metadata().map_err(|e| AppError::Io(e.to_string()))?.len();

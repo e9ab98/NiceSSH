@@ -78,10 +78,7 @@ pub fn delete_identity(id: String, delete_files: Option<bool>) -> Result<()> {
     let resolved_key = if delete_files {
         // Resolve the full private-key path (key_path may be either a
         // directory + label, or a legacy full file path).
-        let full = match config_store::identity_private_path(&cfg, &target) {
-            Ok(path) => path,
-            Err(_) => String::new(),
-        };
+        let full = config_store::identity_private_path(&cfg, &target).unwrap_or_default();
         if full.trim().is_empty() {
             None
         } else {

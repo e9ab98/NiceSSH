@@ -200,13 +200,10 @@ pub fn new_id() -> String {
 ///    disk - *unless* some identity still references them, in
 ///    which case the record is preserved and the identity is
 ///    remapped to a healthier record in step 2.
-/// 2. For every `cfg.identities[*].sshKeyId` that no longer
-///    resolves to a `cfg.ssh_keys` entry, rebind to:
-///      (a) a surviving `ssh_keys` record whose `private_path`
-///          still exists on disk and that no other identity
-///          already claims (preferred), or
-///      (b) any surviving record whose file is still on disk
-///          (better to share than to lose the binding entirely).
+/// 2. For every `cfg.identities[*].sshKeyId` that no longer resolves to a
+///    `cfg.ssh_keys` entry, rebind to a surviving record whose `private_path`
+///    still exists on disk. Prefer a record that no other identity claims;
+///    otherwise share any surviving record rather than lose the binding.
 ///
 /// The point: as long as the *physical* key file is still on
 /// disk, every identity that previously pointed at it ends up
@@ -527,13 +524,13 @@ mod tests {
             let priv_b = dir.join("id_b");
             std::fs::write(&priv_a, "PRIVATE KEY a").unwrap();
             std::fs::write(
-                &priv_a.with_extension("pub"),
+                priv_a.with_extension("pub"),
                 "ssh-ed25519 AAA comment\n",
             )
             .unwrap();
             std::fs::write(&priv_b, "PRIVATE KEY b").unwrap();
             std::fs::write(
-                &priv_b.with_extension("pub"),
+                priv_b.with_extension("pub"),
                 "ssh-ed25519 BBB comment\n",
             )
             .unwrap();

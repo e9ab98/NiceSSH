@@ -13,12 +13,11 @@
 /// - `Some("ssh")`   -> `true`  (SSH / git:// / ssh+git://)
 /// - `Some("git")`   -> `true`  (treated as SSH-family, conservative)
 /// - `Some("https")` -> `false` (HTTPS goes through `git-credential`,
-///                        sshCommand is dead weight and may shadow
-///                        a sibling SSH project's [core] via the
-///                        shared `~/.gitconfig-<label>` includeIf)
+///   sshCommand is dead weight and may shadow a sibling SSH project's
+///   [core] via the shared `~/.gitconfig-<label>` includeIf)
 /// - `Some("unknown") | None` -> `true` (no remote = treat as SSH
-///                        so a later switch to SSH is seamless;
-///                        matches existing `BindOutcome` default)
+///   so a later switch to SSH is seamless; matches existing
+///   `BindOutcome` default)
 ///
 /// This replaces the three ad-hoc HTTPS/SSH branches in
 /// `apply_identity_to_repo` / `clean_repo_gitconfig` /

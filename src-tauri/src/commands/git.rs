@@ -393,7 +393,7 @@ pub struct RepoGitConfig {
     pub remote_protocol: Option<String>,
 }
 
-#[derive(serde::Serialize, Clone, Copy, PartialEq, Eq, Debug)]
+#[derive(serde::Serialize, Clone, Copy, Default, PartialEq, Eq, Debug)]
 #[serde(rename_all = "lowercase")]
 pub enum IdentitySource {
     /// Value came from the repo's own `.git/config`.
@@ -404,11 +404,8 @@ pub enum IdentitySource {
     /// value, but it is NOT recorded in the repo's `.git/config`.
     Global,
     /// No value anywhere; the field is None.
+    #[default]
     None,
-}
-
-impl Default for IdentitySource {
-    fn default() -> Self { IdentitySource::None }
 }
 
 /// Read the *current* git state of a repo (whatever is on disk, not what
@@ -965,7 +962,7 @@ mod tests {
             let key_path = dir.join("id_roundtrip");
             std::fs::write(&key_path, "PRIVATE").unwrap();
             std::fs::write(
-                &key_path.with_extension("pub"),
+                key_path.with_extension("pub"),
                 "ssh-ed25519 AAAA c\n",
             )
             .unwrap();
@@ -1023,7 +1020,7 @@ mod tests {
             let key_path = dir.join("id_unset");
             std::fs::write(&key_path, "PRIVATE").unwrap();
             std::fs::write(
-                &key_path.with_extension("pub"),
+                key_path.with_extension("pub"),
                 "ssh-ed25519 AAAA c\n",
             ).unwrap();
 
