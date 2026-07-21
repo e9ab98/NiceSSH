@@ -139,17 +139,16 @@ export function SettingsUpdatesTab() {
   useEffect(() => {
     if (changelog) {
       try {
+        const renderer = new marked.Renderer();
+        renderer.link = ({ href, title, text }) => {
+          if (!href || !/^https?:\/\//i.test(href)) return text;
+          const safeTitle = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
+          return `<a href="${href}"${safeTitle} target="_blank" rel="noopener noreferrer">${text}</a>`;
+        };
+
         const html = marked.parse(changelog, {
           async: false,
-          headerIds: false,
-          mangle: false,
-          renderer: {
-            link({ href, title, text }) {
-              if (!href || !/^https?:\/\//i.test(href)) return text;
-              const safeTitle = title ? ` title="${title.replace(/"/g, '&quot;')}"` : '';
-              return `<a href="${href}"${safeTitle} target="_blank" rel="noopener noreferrer">${text}</a>`;
-            },
-          },
+          renderer,
         }) as string;
         setParsedHtml(html);
       } catch (err) {

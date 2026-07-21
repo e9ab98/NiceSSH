@@ -108,6 +108,15 @@ fn provenance_single(kind: ProvenanceKind, detail: impl Into<String>) -> Scanned
         sources: vec![ProvenanceSource { kind, detail }],
     }
 }
+
+fn portable_path(path: &Path) -> String {
+    path.to_string_lossy().replace('\\', "/")
+}
+
+fn normalise_path_key(path: &str) -> String {
+    portable_path(&paths::expand_home(path)).to_lowercase()
+}
+
 pub fn scan() -> Result<Vec<ScannedIdentity>> {
     let existing = collect_existing_for_conflict_check();
     let mut out = Vec::new();
@@ -155,24 +164,13 @@ fn dedupe_by_label(items: Vec<ScannedIdentity>) -> Vec<ScannedIdentity> {
         //    has the same absolute key_path.
         // 1. Try to merge against an existing candidate by
         //    absolute key_path.
-        let cand_path_abs = cand.key_path.as_deref().map(|p| {
-            crate::paths::expand_home(p)
-                .to_string_lossy()
-                .to_string()
-                .to_lowercase()
-        });
+        let cand_path_abs = cand.key_path.as_deref().map(normalise_path_key);
         let cand_label_norm = normalise_label(&cand.label);
         let mut matched_idx: Option<usize> = None;
         for (idx, existing) in out.iter().enumerate() {
             let same_path = matches!(
                 (&cand_path_abs, existing.key_path.as_deref()),
-                (Some(a), Some(p)) if {
-                    let b = crate::paths::expand_home(p)
-                        .to_string_lossy()
-                        .to_string()
-                        .to_lowercase();
-                    a == &b
-                }
+                (Some(a), Some(p)) if a == &normalise_path_key(p)
             );
             let same_label_norm = normalise_label(&existing.label) == cand_label_norm;
             if same_path || same_label_norm {
@@ -229,7 +227,7 @@ fn backfill_key_paths(items: Vec<ScannedIdentity>) -> Vec<ScannedIdentity> {
                             .map(|s| s.starts_with("-----BEGIN") && s.contains("PRIVATE KEY"))
                             .unwrap_or(false)
                     {
-                        c.key_path = Some(path.to_string_lossy().to_string());
+                        c.key_path = Some(portable_path(&path));
                         break;
                     }
                 }
@@ -353,7 +351,7 @@ fn collect_existing_for_conflict_check() -> ExistingIdentities {
             // paths read from disk.
             if let Some(key_id) = &id.ssh_key_id {
                 if let Some(key) = cfg.ssh_keys.iter().find(|key| &key.id == key_id) {
-                    key_paths.insert(key.private_path.to_lowercase());
+                    key_paths.insert(normalise_path_key(&key.private_path));
                 }
             }
         }
@@ -425,7 +423,7 @@ fn scan_gitconfig_includes(existing: &ExistingIdentities) -> Result<Vec<ScannedI
             conflicts_with_existing: existing.labels.contains(&label.to_lowercase()),
             conflicts_with_existing_key: key_path
                 .as_ref()
-                .map(|k| existing.key_paths.contains(&k.to_lowercase()))
+                .map(|k| existing.key_paths.contains(&normalise_path_key(k)))
                 .unwrap_or(false),
             provenance: provenance_single(
                 ProvenanceKind::GitconfigIncludeIf,
@@ -473,7 +471,7 @@ fn read_subfile(path: &Path) -> (Option<String>, Option<String>, Option<String>)
                     let after = &v[idx + 3..];
                     if let Some(path) = after.split_whitespace().next() {
                         if !path.is_empty() {
-                            key_path = Some(path.to_string());
+                            key_path = Some(path.replace('\\', "/"));
                         }
                     }
                 }
@@ -501,11 +499,11 @@ fn scan_ssh_key_orphans(
         .filter_map(|c| {
             c.key_path
                 .as_ref()
-                .map(|k| crate::paths::expand_home(k).to_string_lossy().to_string())
+                .map(|k| normalise_path_key(k))
         })
         .collect();
     for k in &existing.key_paths {
-        known_key_paths.insert(crate::paths::expand_home(k).to_string_lossy().to_string());
+        known_key_paths.insert(k.clone());
     }
 
     for entry in fs::read_dir(&ssh_dir)? {
@@ -527,11 +525,12 @@ fn scan_ssh_key_orphans(
         if !is_key {
             continue;
         }
-        let abs = path.to_string_lossy().to_string();
-        if known_key_paths.contains(&abs) {
+        let abs = portable_path(&path);
+        let abs_key = normalise_path_key(&abs);
+        if known_key_paths.contains(&abs_key) {
             continue;
         }
-        let pub_path: PathBuf = format!("{}.pub", abs).into();
+        let pub_path: PathBuf = format!("{}.pub", path.to_string_lossy()).into();
         let comment = fs::read_to_string(&pub_path).ok().and_then(|s| {
             s.split_whitespace().nth(2).map(|c| c.to_string())
         });
@@ -547,7 +546,7 @@ fn scan_ssh_key_orphans(
             key_path: Some(abs.clone()),
             match_path: None,
             conflicts_with_existing: existing.labels.contains(&label.to_lowercase()),
-            conflicts_with_existing_key: existing.key_paths.contains(&abs.to_lowercase()),
+            conflicts_with_existing_key: existing.key_paths.contains(&abs_key),
             provenance: provenance_single(
                 ProvenanceKind::SshKeyOrphan,
                 "Orphan key in ~/.ssh/ (no includeIf binding)",
@@ -561,6 +560,14 @@ fn scan_ssh_key_orphans(
 mod tests {
     use super::*;
     use crate::test_helpers::with_temp_home;
+
+    #[test]
+    fn test_normalise_path_key_handles_windows_separators_and_case() {
+        assert_eq!(
+            normalise_path_key(r"C:\Users\RUNNER~1\AppData\Local\Temp\.ssh\id_work"),
+            normalise_path_key("c:/users/runner~1/appdata/local/temp/.ssh/id_work"),
+        );
+    }
 
     #[test]
     fn test_label_from_gitconfig_path() {
