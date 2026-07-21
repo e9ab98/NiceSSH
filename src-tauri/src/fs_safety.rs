@@ -1,8 +1,9 @@
-use std::io::Write;
 use std::path::Path;
 
 use crate::error::Result;
 
+#[cfg(unix)]
+use std::io::Write;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
@@ -15,7 +16,7 @@ use std::os::unix::fs::PermissionsExt;
 /// closed, `rename` swaps it onto `path`. On non-Unix platforms the
 /// mode argument is ignored and the temp file is created under the
 /// process umask — same behaviour as `std::fs::write`.
-pub fn atomic_write(path: &Path, content: &str, mode: u32) -> Result<()> {
+pub fn atomic_write(path: &Path, content: &str, _mode: u32) -> Result<()> {
     let mut tmp = path.to_path_buf();
     let file_name = path
         .file_name()
@@ -28,7 +29,7 @@ pub fn atomic_write(path: &Path, content: &str, mode: u32) -> Result<()> {
         use std::fs::OpenOptions;
         use std::os::unix::fs::OpenOptionsExt;
         let mut opts = OpenOptions::new();
-        opts.create_new(true).write(true).truncate(true).mode(mode);
+        opts.create_new(true).write(true).truncate(true).mode(_mode);
         match opts.open(&tmp).and_then(|mut f| f.write_all(content.as_bytes())) {
             Ok(()) => {}
             Err(e) => {
