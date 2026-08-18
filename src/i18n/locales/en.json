@@ -191,7 +191,20 @@
     "keyPathHint": "Directory where the key pair will be created",
     "resetLabel": "Reset from folder",
     "labelImmutable": "Cannot be changed after creation — the SSH key file, ~/.gitconfig subfile, and SSH host block all use this name.",
-    "keyPathImmutable": "Cannot be changed after creation — the SSH key file is stored at <keyPath>/<label>. Delete and recreate the identity to move it."
+    "keyPathImmutable": "Cannot be changed after creation — the SSH key file is stored at <keyPath>/<label>. Delete and recreate the identity to move it.",
+    "signing": {
+      "enableLabel": "Sign commits with this identity's key",
+      "enableHint": "Writes [user] signingkey + [gpg] format = ssh to ~/.gitconfig-<label>. Commits get a \"Verified\" badge on GitHub.",
+      "keyLabel": "Signing key",
+      "keyHint": "Most users reuse the SSH key they push with. Pick a different key only if you have a dedicated signing key (e.g. hardware token).",
+      "noKeyOption": "(none)",
+      "showAdvanced": "Advanced — pick signing format",
+      "hideAdvanced": "Hide advanced",
+      "kindLabel": "Signing format",
+      "kindHint": "SSH reuses your existing SSH keychain (recommended). GPG is for users with an existing GPG workflow.",
+      "kindSsh": "SSH (gpg.format = ssh)",
+      "kindGpg": "GPG (uses gpg.program)"
+    }
   },
   "keyGenerator": {
     "title": "Generate SSH Key",
@@ -313,7 +326,8 @@
       "logs": "Logs",
       "env": "SSH Environment",
       "updates": "Updates",
-      "keys": "SSH Keys"
+      "keys": "SSH Keys",
+      "signing": "Signing"
     },
     "theme": {
       "mode": "Mode",
@@ -376,6 +390,18 @@
       "sshConfig": "SSH config view",
       "history": "History view",
       "settings": "Settings view"
+    },
+    "signing": {
+      "testTitle": "Test commit signing",
+      "testHint": "Pick an identity with signing enabled and click the button. NiceSSH will create a throwaway commit in a scratch repo and verify whether git actually signs it. Use this to confirm your SSH/GPG setup is wired correctly before pushing.",
+      "testIdentityLabel": "Identity",
+      "testButton": "Run signing test",
+      "testRunning": "Running…",
+      "testPassed": "Signature verified",
+      "testFailed": "Signature failed",
+      "noEligibleIdentity": "No identities have signing enabled. Enable it in the Identities view first.",
+      "signedBy": "Signed by {{email}}",
+      "signerFpr": "Key: {{fpr}}"
     }
   },
   "scanResults": {

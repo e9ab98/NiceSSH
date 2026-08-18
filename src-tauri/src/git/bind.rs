@@ -103,18 +103,45 @@ pub fn apply_identity_to_repo(project_id: String, identity_id: String) -> Result
             }
         }
         let full_key = config_store::identity_private_path(&cfg, identity)?;
+        // Windows-only: make sure git can find ssh-keygen for
+        // signing. The helper is a no-op on non-Windows platforms
+        // and is idempotent on Windows (marker-gated).
+        #[cfg(windows)]
+        if identity.signing_key_id.is_some() {
+            git_config::ensure_windows_gpg_program()?;
+        }
+        // Resolve the signing config once, here, so the writer
+        // gets a concrete `key_path` rather than re-resolving
+        // `signing_key_id` (which would mean two places that need
+        // to agree on key resolution semantics). When
+        // `signing_key_id` is None, or when it points at a missing
+        // record (reconcile should have cleared it, but we
+        // double-check), we pass `None` to the writer — it then
+        // emits the [user] block without any signing section.
+        let signing = identity.signing_key_id.as_ref().and_then(|key_id| {
+            cfg.ssh_keys
+                .iter()
+                .find(|k| &k.id == key_id)
+                .map(|k| git_config::IdentitySigning {
+                    kind: identity.signing_key_kind.clone(),
+                    key_path: k.private_path.clone(),
+                    require_signed_commits: identity.require_signed_commits,
+                })
+        });
         match outcome {
             BindOutcome::SshStyle => git_config::write_identity_subfile(
                 &identity.label,
                 &identity.user_name,
                 &identity.user_email,
                 &full_key,
+                signing.as_ref(),
             )?,
             BindOutcome::UserOnly => git_config::write_identity_subfile_user_only(
                 &identity.label,
                 &identity.user_name,
                 &identity.user_email,
                 &full_key,
+                signing.as_ref(),
             )?,
             BindOutcome::NeedsRemote => {}
         }

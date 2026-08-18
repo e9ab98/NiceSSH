@@ -191,7 +191,20 @@
     "keyPathHint": "密钥保存的目录。私钥与公钥将在此目录下创建",
     "resetLabel": "从目录还原",
     "labelImmutable": "创建后不可修改 —— 私钥文件、~/.gitconfig 子文件、SSH 主机块都按此名定位。",
-    "keyPathImmutable": "创建后不可修改 —— 私钥文件位于 <keyPath>/<label>。如需移动，请删除后重新创建。"
+    "keyPathImmutable": "创建后不可修改 —— 私钥文件位于 <keyPath>/<label>。如需移动，请删除后重新创建。",
+    "signing": {
+      "enableLabel": "用此身份的 key 签名 commit",
+      "enableHint": "会把 [user] signingkey + [gpg] format = ssh 写入 ~/.gitconfig-<label>。commit 在 GitHub 上会显示\"已验证\"。",
+      "keyLabel": "签名 key",
+      "keyHint": "大多数人复用 push 用的 SSH key。除非你有专用签名 key（如硬件 token），否则无需更改。",
+      "noKeyOption": "（无）",
+      "showAdvanced": "高级 — 选择签名格式",
+      "hideAdvanced": "隐藏高级",
+      "kindLabel": "签名格式",
+      "kindHint": "SSH 复用现有 SSH keychain（推荐）。GPG 适合已有 GPG 工作流的用户。",
+      "kindSsh": "SSH (gpg.format = ssh)",
+      "kindGpg": "GPG (使用 gpg.program)"
+    }
   },
   "keyGenerator": {
     "title": "生成 SSH 密钥",
@@ -313,7 +326,8 @@
       "logs": "日志",
       "env": "SSH 环境",
       "updates": "更新",
-      "keys": "SSH 密钥"
+      "keys": "SSH 密钥",
+      "signing": "签名"
     },
     "theme": {
       "mode": "模式",
@@ -376,6 +390,18 @@
       "sshConfig": "SSH 配置视图",
       "history": "历史视图",
       "settings": "设置视图"
+    },
+    "signing": {
+      "testTitle": "测试 commit 签名",
+      "testHint": "选一个开启了签名的身份，点击按钮。NiceSSH 会在临时 repo 里创建一个空 commit 并验证 git 是否真的签名。用来确认你的 SSH/GPG 配置正确后再 push。",
+      "testIdentityLabel": "身份",
+      "testButton": "运行签名测试",
+      "testRunning": "运行中…",
+      "testPassed": "签名验证通过",
+      "testFailed": "签名失败",
+      "noEligibleIdentity": "没有开启签名的身份。先在身份管理里开启。",
+      "signedBy": "签名人：{{email}}",
+      "signerFpr": "Key：{{fpr}}"
     }
   },
   "scanResults": {

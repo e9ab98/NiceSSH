@@ -5,8 +5,9 @@ import { Card } from '../components/ui/card';
 import { Button } from '../components/ui/button';
 import { useSettingsStore, type KeyType } from '../store/settings';
 import type { Locale } from '../i18n';
-import { checkEnvironment, EnvCheck, clearHistory, readLogTail, clearLog } from '../ipc/settings';
+import { checkEnvironment, EnvCheck, clearHistory, readLogTail, clearLog, testSigningSetup, type SigningTestResult } from '../ipc/settings';
 import { listKeys, type SshKeyInfo } from '../ipc/sshKeys';
+import { useIdentitiesStore } from '../store/identities';
 import { toast } from 'sonner';
 import { SettingsUpdatesTab } from '../features/updateNotification/SettingsUpdatesTab';
 
@@ -31,6 +32,56 @@ export function SettingsView() {
   const [logText, setLogText] = useState<string>('');
   const [logError, setLogError] = useState<string | null>(null);
   const [logAutoRefresh, setLogAutoRefresh] = useState(false);
+
+  // v3: signing diagnostic — list of identities that have
+  // requireSignedCommits=true AND a signingKeyId. The Settings →
+  // Signing tab lets the user pick one and run `test_signing_setup`
+  // to verify the full pipeline actually works on their machine.
+  const [signingTestIdentityId, setSigningTestIdentityId] = useState<string>('');
+  const [signingTestBusy, setSigningTestBusy] = useState(false);
+  const [signingTestResult, setSigningTestResult] = useState<SigningTestResult | null>(null);
+  // Read the identities list from the store so this tab stays in
+  // sync with edits in the Identities view.
+  const identities = useIdentitiesStore((s) => s.items);
+  const signingIdentities = useMemo(
+    () => identities.filter((id) => id.requireSignedCommits && id.signingKeyId !== null),
+    [identities],
+  );
+  // Default to the first eligible identity when the tab first
+  // mounts or the current selection becomes invalid.
+  useEffect(() => {
+    if (!signingTestIdentityId && signingIdentities.length > 0) {
+      setSigningTestIdentityId(signingIdentities[0].id);
+    } else if (
+      signingTestIdentityId &&
+      !signingIdentities.some((id) => id.id === signingTestIdentityId)
+    ) {
+      setSigningTestIdentityId(signingIdentities[0]?.id ?? '');
+    }
+  }, [signingIdentities, signingTestIdentityId]);
+  const onRunSigningTest = useCallback(async () => {
+    const id = identities.find((x) => x.id === signingTestIdentityId);
+    if (!id || !id.signingKeyId) return;
+    setSigningTestBusy(true);
+    setSigningTestResult(null);
+    try {
+      const r = await testSigningSetup(id.id, id.signingKeyId, id.signingKeyKind);
+      setSigningTestResult(r);
+      if (r.ok) toast.success(t('settings.signing.testPassed'));
+      else toast.error(t('settings.signing.testFailed'));
+    } catch (e) {
+      setSigningTestResult({
+        ok: false,
+        status: 'E',
+        signerEmail: null,
+        signerKeyFpr: null,
+        message: String(e),
+      });
+      toast.error(String(e));
+    } finally {
+      setSigningTestBusy(false);
+    }
+  }, [identities, signingTestIdentityId, t]);
 
   useEffect(() => {
     checkEnvironment().then(setEnv).catch(() => setEnv([]));
@@ -78,6 +129,7 @@ export function SettingsView() {
           <TabsTrigger value="theme">{t('settings.tabs.theme')}</TabsTrigger>
           <TabsTrigger value="language">{t('settings.tabs.language')}</TabsTrigger>
           <TabsTrigger value="keys">{t('settings.tabs.keys')}</TabsTrigger>
+          <TabsTrigger value="signing">{t('settings.tabs.signing')}</TabsTrigger>
           <TabsTrigger value="logs">{t('settings.tabs.logs')}</TabsTrigger>
           <TabsTrigger value="env">{t('settings.tabs.env')}</TabsTrigger>
           <TabsTrigger value="updates">{t('settings.tabs.updates')}</TabsTrigger>
@@ -158,6 +210,72 @@ export function SettingsView() {
                   <span className="font-mono font-semibold">{stats.total}</span>
                 </div>
               </div>
+            )}
+          </Card>
+        </TabsContent>
+
+        <TabsContent value="signing" className="space-y-3">
+          <Card className="p-4 space-y-3">
+            <div>
+              <div className="font-medium">{t('settings.signing.testTitle')}</div>
+              <p className="text-text-2 text-xs mt-1">{t('settings.signing.testHint')}</p>
+            </div>
+            <div className="flex flex-col gap-2 sm:flex-row sm:items-center">
+              <select
+                value={signingTestIdentityId}
+                onChange={(e) => setSigningTestIdentityId(e.target.value)}
+                className="h-9 rounded-md border border-border bg-bg-0 px-3 text-sm text-text-0 min-w-[14rem]"
+                disabled={signingIdentities.length === 0 || signingTestBusy}
+                aria-label={t('settings.signing.testIdentityLabel')}
+              >
+                {signingIdentities.length === 0 ? (
+                  <option value="">{t('settings.signing.noEligibleIdentity')}</option>
+                ) : (
+                  signingIdentities.map((id) => (
+                    <option key={id.id} value={id.id}>
+                      {id.label} ({id.userEmail})
+                    </option>
+                  ))
+                )}
+              </select>
+              <Button
+                variant="outline"
+                size="sm"
+                disabled={signingIdentities.length === 0 || signingTestBusy || !signingTestIdentityId}
+                onClick={onRunSigningTest}
+              >
+                {signingTestBusy ? t('settings.signing.testRunning') : t('settings.signing.testButton')}
+              </Button>
+            </div>
+            {signingTestResult && (
+              <div
+                className={
+                  'rounded-md border p-3 text-sm ' +
+                  (signingTestResult.ok
+                    ? 'border-success/40 bg-success/10 text-text-0'
+                    : 'border-danger/40 bg-danger/10 text-text-0')
+                }
+                data-testid="signing-test-result"
+              >
+                    <div className="font-medium">
+                      {signingTestResult.ok
+                        ? t('settings.signing.testPassed')
+                        : t('settings.signing.testFailed')}
+                    </div>
+                    <div className="text-xs text-text-1 mt-1">
+                      {signingTestResult.message}
+                    </div>
+                    {signingTestResult.signerEmail && (
+                      <div className="text-xs text-text-2 mt-1">
+                        {t('settings.signing.signedBy', { email: signingTestResult.signerEmail })}
+                      </div>
+                    )}
+                    {signingTestResult.signerKeyFpr && (
+                      <div className="text-xs text-text-2 mt-1 font-mono break-all">
+                        {t('settings.signing.signerFpr', { fpr: signingTestResult.signerKeyFpr })}
+                      </div>
+                    )}
+                  </div>
             )}
           </Card>
         </TabsContent>

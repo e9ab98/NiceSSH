@@ -1,10 +1,11 @@
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useTranslation } from 'react-i18next';
 import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogFooter } from '../../components/ui/dialog';
 import { Input, Label } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip';
 import { Button } from '../../components/ui/button';
-import type { Identity } from '../../ipc/identities';
+import { useKeysStore, type SshKeyInfo } from '../../store/identities';
+import type { Identity, SigningKeyKind } from '../../ipc/identities';
 function sanitizeLabel(value: string): string {
   return value.replace(/[\\/]+/g, '_');
 }
@@ -26,8 +27,37 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
   const [userEmail, setUserEmail] = useState(initial?.userEmail ?? '');
   const [hostAlias, setHostAlias] = useState(initial?.hostAlias ?? 'github.com');
   const [gitHost, setGitHost] = useState(initial?.gitHost ?? 'github.com');
+  // v3: commit signing fields. Defaults: signing off; if the
+  // user enables it, default to reusing the identity's push
+  // SSH key (signingKeyId = sshKeyId), since "same key for push
+  // + sign" is what 95% of users want.
+  const [requireSignedCommits, setRequireSignedCommits] = useState(
+    initial?.requireSignedCommits ?? false,
+  );
+  const [signingKeyId, setSigningKeyId] = useState<string | null>(
+    initial?.signingKeyId ?? initial?.sshKeyId ?? null,
+  );
+  const [signingKeyKind, setSigningKeyKind] = useState<SigningKeyKind>(
+    initial?.signingKeyKind ?? 'ssh',
+  );
   const [busy, setBusy] = useState(false);
   const labelBaseRef = useRef(initialLabel);
+  const keys = useKeysStore((s) => s.items);
+  // Make sure we have a fresh list for the signing-key dropdown.
+  const keysRefresh = useKeysStore((s) => s.refresh);
+  useEffect(() => {
+    void keysRefresh();
+  }, [keysRefresh]);
+  const signingKeyOptions = useMemo(() => keys, [keys]);
+  // (no defaultDropdownId needed — the signingKeyId state is
+  //  initialized to initial?.signingKeyId ?? initial?.sshKeyId
+  //  above, and the dropdown's selected value falls back to the
+  //  first option when neither is set.)
+  // Show "Advanced (GPG)" selector only when the user opts in via
+  // an explicit toggle — keeps the form compact for the 95% case.
+  const [showSigningKindAdvanced, setShowSigningKindAdvanced] = useState(
+    initial?.signingKeyKind === 'gpg',
+  );
 
   useEffect(() => {
     if (!open) return;
@@ -38,6 +68,10 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
     setUserEmail(initial?.userEmail ?? '');
     setHostAlias(initial?.hostAlias ?? 'github.com');
     setGitHost(initial?.gitHost ?? 'github.com');
+    setRequireSignedCommits(initial?.requireSignedCommits ?? false);
+    setSigningKeyId(initial?.signingKeyId ?? initial?.sshKeyId ?? null);
+    setSigningKeyKind(initial?.signingKeyKind ?? 'ssh');
+    setShowSigningKindAdvanced(initial?.signingKeyKind === 'gpg');
   }, [open, initial, defaultLabel]);
 
   const submit = async (event: React.FormEvent) => {
@@ -47,6 +81,12 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
     if (!cleanLabel) return;
     setBusy(true);
     try {
+      // Consistent-state guard. Mirrors the Rust
+      // `signing_config_is_inconsistent` check: turning the toggle
+      // on without picking a key would fail backend validation.
+      const finalSigningKeyId = requireSignedCommits
+        ? (signingKeyId ?? initial?.sshKeyId ?? null)
+        : null;
       await onSubmit({
         label: cleanLabel,
         userName,
@@ -55,11 +95,9 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
         matchPath: initial?.matchPath ?? null,
         hostAlias: hostAlias || null,
         gitHost: gitHost || null,
-        // v3: signing fields default to "off" in the form. A
-        // dedicated toggle is added in PR2.
-        requireSignedCommits: initial?.requireSignedCommits ?? false,
-        signingKeyId: initial?.signingKeyId ?? null,
-        signingKeyKind: initial?.signingKeyKind ?? 'ssh',
+        requireSignedCommits,
+        signingKeyId: finalSigningKeyId,
+        signingKeyKind,
       });
       onOpenChange(false);
     } finally {
@@ -74,6 +112,10 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
     setUserEmail('');
     setHostAlias('github.com');
     setGitHost('github.com');
+    setRequireSignedCommits(false);
+    setSigningKeyId(null);
+    setSigningKeyKind('ssh');
+    setShowSigningKindAdvanced(false);
     labelBaseRef.current = defaultLabel ?? '';
   };
 
@@ -114,6 +156,73 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
             <div><Label htmlFor="hostAlias">{t('identityForm.hostAlias')}</Label><Input id="hostAlias" value={hostAlias} onChange={(event) => setHostAlias(event.target.value)} placeholder="github.com" /></div>
             <div><Label htmlFor="gitHost">{t('identityForm.gitHost')}</Label><Input id="gitHost" value={gitHost} onChange={(event) => setGitHost(event.target.value)} placeholder="github.com" /></div>
           </div>
+
+          {/* ── v3: commit signing ─────────────────────────────── */}
+          <div className="rounded-md border border-border bg-bg-0 p-3 space-y-2">
+            <label className="flex items-start gap-2 cursor-pointer select-none">
+              <input
+                type="checkbox"
+                checked={requireSignedCommits}
+                onChange={(e) => setRequireSignedCommits(e.target.checked)}
+                className="h-4 w-4 mt-0.5 rounded border-border text-brand focus:ring-brand"
+                aria-label={t('identityForm.signing.enableLabel')}
+              />
+              <span>
+                <div className="text-sm font-medium text-text-0">
+                  {t('identityForm.signing.enableLabel')}
+                </div>
+                <div className="text-xs text-text-2 mt-0.5">
+                  {t('identityForm.signing.enableHint')}
+                </div>
+              </span>
+            </label>
+            {requireSignedCommits && (
+              <div className="space-y-2 pl-6">
+                <div>
+                  <Label htmlFor="signingKeyId">{t('identityForm.signing.keyLabel')}</Label>
+                  <select
+                    id="signingKeyId"
+                    value={signingKeyId ?? ''}
+                    onChange={(e) => setSigningKeyId(e.target.value || null)}
+                    className="h-9 w-full rounded-md border border-border bg-bg-0 px-3 text-sm text-text-0"
+                  >
+                    <option value="">{t('identityForm.signing.noKeyOption')}</option>
+                    {signingKeyOptions.map((key: SshKeyInfo) => (
+                      <option key={key.id} value={key.id}>
+                        {key.name} ({key.privatePath})
+                      </option>
+                    ))}
+                  </select>
+                  <p className="text-xs text-text-2 mt-1">{t('identityForm.signing.keyHint')}</p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => setShowSigningKindAdvanced((s) => !s)}
+                  className="text-xs text-text-1 hover:text-text-0 underline underline-offset-2"
+                >
+                  {showSigningKindAdvanced
+                    ? t('identityForm.signing.hideAdvanced')
+                    : t('identityForm.signing.showAdvanced')}
+                </button>
+                {showSigningKindAdvanced && (
+                  <div>
+                    <Label htmlFor="signingKeyKind">{t('identityForm.signing.kindLabel')}</Label>
+                    <select
+                      id="signingKeyKind"
+                      value={signingKeyKind}
+                      onChange={(e) => setSigningKeyKind(e.target.value as SigningKeyKind)}
+                      className="h-9 w-full rounded-md border border-border bg-bg-0 px-3 text-sm text-text-0"
+                    >
+                      <option value="ssh">{t('identityForm.signing.kindSsh')}</option>
+                      <option value="gpg">{t('identityForm.signing.kindGpg')}</option>
+                    </select>
+                    <p className="text-xs text-text-2 mt-1">{t('identityForm.signing.kindHint')}</p>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
           <DialogFooter className="gap-2">
             <Button type="button" variant="ghost" onClick={() => handleOpenChange(false)}>{t('common.cancel')}</Button>
             <Button type="submit" disabled={busy}>{busy ? t('common.saving') : t('common.save')}</Button>

@@ -87,6 +87,7 @@ pub fn run() {
             commands::settings::check_environment,
             commands::settings::clear_history,
             commands::settings::reset_environment,
+            commands::settings::test_signing_setup,
             commands::log_viewer::read_log_tail,
             commands::log_viewer::clear_log,
         ])
