@@ -1,4 +1,4 @@
-use crate::config_store::{self, Identity};
+use crate::config_store::{self, Identity, IdentityInput};
 use crate::error::{AppError, Result};
 use crate::paths;
 
@@ -9,27 +9,26 @@ pub fn list_identities() -> Result<Vec<Identity>> {
 }
 
 #[tauri::command]
-pub fn create_identity(
-    label: String,
-    user_name: String,
-    user_email: String,
-    ssh_key_id: Option<String>,
-    match_path: Option<String>,
-    host_alias: Option<String>,
-    git_host: Option<String>,
-) -> Result<Identity> {
+pub fn create_identity(input: IdentityInput) -> Result<Identity> {
+    if input.label.trim().is_empty() {
+        return Err(AppError::Validation("identity label cannot be empty".into()));
+    }
+    if input.user_email.trim().is_empty() {
+        return Err(AppError::Validation("identity email cannot be empty".into()));
+    }
     let mut cfg = config_store::read()?;
     let id = config_store::new_id();
-    let identity = Identity {
-        id: id.clone(),
-        label,
-        user_name,
-        user_email,
-        ssh_key_id,
-        match_path,
-        host_alias,
-        git_host,
-    };
+    let identity = Identity::from_input(input, id.clone());
+    if identity.signing_config_is_inconsistent() {
+        // Reject the inconsistent "require signing without a signing
+        // key" state at the IPC boundary so the caller (frontend)
+        // gets a precise Validation error before any side-effecting
+        // write. We could relax this later if a UI emerges for
+        // "I want to remember signing is on but skip it today".
+        return Err(AppError::Validation(
+            "requireSignedCommits is true but signingKeyId is null".into(),
+        ));
+    }
     cfg.identities.push(identity.clone());
     config_store::write_snapshot(
         &cfg,
@@ -40,16 +39,28 @@ pub fn create_identity(
 }
 
 #[tauri::command]
-pub fn update_identity(id: String, updated: Identity) -> Result<Identity> {
+pub fn update_identity(id: String, updated: IdentityInput) -> Result<Identity> {
+    if updated.label.trim().is_empty() {
+        return Err(AppError::Validation("identity label cannot be empty".into()));
+    }
+    if updated.user_email.trim().is_empty() {
+        return Err(AppError::Validation("identity email cannot be empty".into()));
+    }
     let mut cfg = config_store::read()?;
+    let identity = Identity::from_input(updated, id.clone());
+    if identity.signing_config_is_inconsistent() {
+        return Err(AppError::Validation(
+            "requireSignedCommits is true but signingKeyId is null".into(),
+        ));
+    }
     if let Some(existing) = cfg.identities.iter_mut().find(|i| i.id == id) {
-        *existing = updated.clone();
+        *existing = identity.clone();
         config_store::write_snapshot(
             &cfg,
             "update_identity",
-            &format!("Updated identity {}", updated.label),
+            &format!("Updated identity {}", identity.label),
         )?;
-        Ok(updated)
+        Ok(identity)
     } else {
         Err(AppError::NotFound(format!("identity {}", id)))
     }
@@ -174,7 +185,7 @@ mod tests {
             ssh_key_id: Some(key_id),
             match_path: None,
             host_alias: Some("github.com".into()),
-            git_host: None,
+        ..Default::default()
         });
         config_store::write_snapshot(&cfg, "test_seed", "seed").unwrap();
         (id, priv_path)
@@ -255,7 +266,7 @@ mod tests {
                 ssh_key_id: Some(key_id),
                 match_path: None,
                 host_alias: None,
-                git_host: None,
+            ..Default::default()
             });
             config_store::write_snapshot(&cfg, "test_seed", "seed").unwrap();
 
@@ -299,7 +310,7 @@ mod tests {
                 ssh_key_id: Some(key_id),
                 match_path: None,
                 host_alias: None,
-                git_host: None,
+            ..Default::default()
             });
             config_store::write_snapshot(&cfg, "test_seed", "seed").unwrap();
 
@@ -325,7 +336,7 @@ mod tests {
                 ssh_key_id: None,
                 match_path: None,
                 host_alias: None,
-                git_host: None,
+            ..Default::default()
             });
             config_store::write_snapshot(&cfg, "test_seed", "seed").unwrap();
 

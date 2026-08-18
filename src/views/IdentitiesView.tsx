@@ -220,6 +220,10 @@ export function IdentitiesView() {
           matchPath: c.matchPath,
           hostAlias: null,
           gitHost: null,
+          // v3: scanned identities have no signing config.
+          requireSignedCommits: false,
+          signingKeyId: null,
+          signingKeyKind: 'ssh',
         });
         // Make the freshly-imported record visible to all
         // views (Projects / IdentitySwitcher) immediately.

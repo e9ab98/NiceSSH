@@ -177,9 +177,7 @@ mod bind_tests {
             user_name: name.into(),
             user_email: email.into(),
             ssh_key_id: Some(format!("key_{label}")),
-            match_path: None,
-            host_alias: None,
-            git_host: None,
+            ..Default::default()
         }
     }
 

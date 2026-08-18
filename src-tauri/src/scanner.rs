@@ -673,6 +673,7 @@ mod tests {
                 match_path: None,
                 host_alias: None,
                 git_host: None,
+                ..Default::default()
             });
             crate::config_store::write_snapshot(&cfg, "test", "fixture").unwrap();
 

@@ -306,9 +306,7 @@ mod io_tests {
             user_name: name.into(),
             user_email: email.into(),
             ssh_key_id: Some(format!("key_{label}")),
-            match_path: None,
-            host_alias: None,
-            git_host: None,
+            ..Default::default()
         }
     }
 
@@ -483,7 +481,7 @@ mod io_tests {
                 id: "id1".into(), label: "work".into(),
                 user_name: "Alice".into(), user_email: "a@x".into(),
                 ssh_key_id: Some("key_work".into()), match_path: None,
-                host_alias: None, git_host: None,
+                            ..Default::default()
             };
             let dir = crate::paths::nicessh_dir().unwrap();
             std::fs::create_dir_all(&dir).unwrap();
@@ -523,7 +521,7 @@ mod io_tests {
                 id: "id1".into(), label: "work".into(),
                 user_name: "Alice".into(), user_email: "a@x".into(),
                 ssh_key_id: Some("key_work".into()), match_path: None,
-                host_alias: None, git_host: None,
+                            ..Default::default()
             };
             let dir = crate::paths::nicessh_dir().unwrap();
             std::fs::create_dir_all(&dir).unwrap();
@@ -561,7 +559,7 @@ mod io_tests {
                 id: "id1".into(), label: "work".into(),
                 user_name: "Alice".into(), user_email: "a@x".into(),
                 ssh_key_id: Some("key_work".into()), match_path: None,
-                host_alias: None, git_host: None,
+                            ..Default::default()
             };
             let dir = crate::paths::nicessh_dir().unwrap();
             std::fs::create_dir_all(&dir).unwrap();
@@ -604,7 +602,7 @@ mod io_tests {
                 id: "id1".into(), label: "https_proj".into(),
                 user_name: "New".into(), user_email: "n@x".into(),
                 ssh_key_id: None, match_path: None,
-                host_alias: None, git_host: None,
+                            ..Default::default()
             };
             super::write_repo_user_only(&repo, &id).unwrap();
             let raw = std::fs::read_to_string(repo.join(".git/config")).unwrap();

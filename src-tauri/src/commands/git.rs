@@ -988,6 +988,7 @@ mod tests {
                 match_path: None,
                 host_alias: None,
                 git_host: None,
+                ..Default::default()
             });
             config_store::write_snapshot(&cfg, "seed", "seed").unwrap();
 
@@ -1045,6 +1046,7 @@ mod tests {
                 match_path: None,
                 host_alias: None,
                 git_host: None,
+                ..Default::default()
             });
             config_store::write_snapshot(&cfg, "seed", "seed").unwrap();
 

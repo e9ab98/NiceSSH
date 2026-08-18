@@ -55,6 +55,11 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
         matchPath: initial?.matchPath ?? null,
         hostAlias: hostAlias || null,
         gitHost: gitHost || null,
+        // v3: signing fields default to "off" in the form. A
+        // dedicated toggle is added in PR2.
+        requireSignedCommits: initial?.requireSignedCommits ?? false,
+        signingKeyId: initial?.signingKeyId ?? null,
+        signingKeyKind: initial?.signingKeyKind ?? 'ssh',
       });
       onOpenChange(false);
     } finally {

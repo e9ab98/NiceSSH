@@ -8,7 +8,7 @@ use crate::fs_safety;
 use crate::history::{self, FileChange};
 use crate::paths;
 
-pub const CURRENT_VERSION: u32 = 2;
+pub const CURRENT_VERSION: u32 = 3;
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct Project {
@@ -19,7 +19,7 @@ pub struct Project {
     pub identity_id: Option<String>,
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
 #[serde(rename_all = "camelCase")]
 pub struct Identity {
     pub id: String,
@@ -36,6 +36,106 @@ pub struct Identity {
     pub host_alias: Option<String>,
     #[serde(rename = "gitHost")]
     pub git_host: Option<String>,
+
+    // ── v3: commit signing config ────────────────────────────────
+    /// When true, commits authored under this identity should be
+    /// signed. Drives `[commit] gpgsign = true` in the per-identity
+    /// sub-gitconfig. Default `false` for backward compatibility:
+    /// v2 identities had no concept of signing, so we leave the
+    /// old ones alone on upgrade and let the user opt in via the UI.
+    #[serde(default)]
+    pub require_signed_commits: bool,
+
+    /// Which signing key to use. `None` means "don't sign" —
+    /// `(requireSignedCommits, signingKeyId)` are intentionally
+    /// both required for signing to happen, so a user can store
+    /// `requireSignedCommits = false` to remember "I had this
+    /// configured but turned it off".
+    #[serde(default)]
+    pub signing_key_id: Option<String>,
+
+    /// Kind of key the `signingKeyId` refers to. `Ssh` is the
+    /// default — it reuses the existing SSH keychain and works
+    /// with `git`'s `gpg.format = ssh` mode (since Git 2.34).
+    /// `Gpg` is opt-in for power users with a pre-existing GPG
+    /// setup.
+    #[serde(default)]
+    pub signing_key_kind: SigningKeyKind,
+}
+
+/// What kind of signing key an `Identity.signing_key_id` refers to.
+///
+/// SSH signing reuses the existing keychain (no new secrets to
+/// manage), so it is the default. GPG is preserved as an opt-in
+/// for users with a pre-existing GPG workflow.
+#[derive(Debug, Clone, Default, Serialize, Deserialize, PartialEq, Eq)]
+#[serde(rename_all = "lowercase")]
+pub enum SigningKeyKind {
+    #[default]
+    Ssh,
+    Gpg,
+}
+
+/// IPC input shape for creating or updating an `Identity`.
+///
+/// Structurally identical to `Identity` except it has no `id` —
+/// the IPC layer always assigns or supplies the id explicitly,
+/// so we keep it out of the input. All new fields added in v3
+/// are `#[serde(default)]` so that older clients (and v2 config
+/// files round-tripped through this code) keep working.
+#[derive(Debug, Clone, Default, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct IdentityInput {
+    pub label: String,
+    #[serde(default)]
+    pub user_name: String,
+    #[serde(default)]
+    pub user_email: String,
+    #[serde(default)]
+    pub ssh_key_id: Option<String>,
+    #[serde(default)]
+    pub match_path: Option<String>,
+    #[serde(default)]
+    pub host_alias: Option<String>,
+    #[serde(default)]
+    pub git_host: Option<String>,
+    #[serde(default)]
+    pub require_signed_commits: bool,
+    #[serde(default)]
+    pub signing_key_id: Option<String>,
+    #[serde(default)]
+    pub signing_key_kind: SigningKeyKind,
+}
+
+impl Identity {
+    /// Build an `Identity` from an `IdentityInput`, assigning the
+    /// supplied `id`. Used by the `create_identity` /
+    /// `update_identity` IPC commands so both code paths share the
+    /// same field-by-field mapping (and any future field added to
+    /// `Identity` shows up in one obvious place).
+    pub fn from_input(input: IdentityInput, id: String) -> Self {
+        Self {
+            id,
+            label: input.label,
+            user_name: input.user_name,
+            user_email: input.user_email,
+            ssh_key_id: input.ssh_key_id,
+            match_path: input.match_path,
+            host_alias: input.host_alias,
+            git_host: input.git_host,
+            require_signed_commits: input.require_signed_commits,
+            signing_key_id: input.signing_key_id,
+            signing_key_kind: input.signing_key_kind,
+        }
+    }
+
+    /// True when the caller asked for signing but the configured
+    /// signing key is missing. Used by `create_identity` /
+    /// `update_identity` to reject the inconsistent state early,
+    /// before any side-effecting writes.
+    pub fn signing_config_is_inconsistent(&self) -> bool {
+        self.require_signed_commits && self.signing_key_id.is_none()
+    }
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -303,6 +403,51 @@ pub fn reconcile_orphan_ssh_keys(cfg: &mut AppConfig) -> bool {
         changed = true;
     }
 
+    // Step 3 (v3): also reconcile `Identity.signing_key_id`.
+    // Mirrors step 2's policy: try to recover by falling back to
+    // the same `ssh_key_id` (the most natural choice — work SSH
+    // key doubles as signing key), then give up by clearing both
+    // `signing_key_id` and `require_signed_commits`. The double
+    // clear is important: leaving `require_signedCommits = true`
+    // when `signing_key_id = None` would let `write_identity_subfile`
+    // emit `[commit] gpgsign = true` against a non-existent key
+    // and silently break commit signing.
+    let known_ids: HashSet<String> =
+        cfg.ssh_keys.iter().map(|k| k.id.clone()).collect();
+    let mut signing_plan: Vec<(String, Option<String>)> = Vec::new();
+    for identity in cfg.identities.iter() {
+        let Some(signing_id) = identity.signing_key_id.clone() else {
+            continue;
+        };
+        if known_ids.contains(&signing_id) {
+            continue;
+        }
+        // Fall back to the identity's sshKeyId if that record
+        // still exists, otherwise clear.
+        let fallback = identity
+            .ssh_key_id
+            .clone()
+            .filter(|id| known_ids.contains(id));
+        signing_plan.push((identity.id.clone(), fallback));
+    }
+    for (identity_id, candidate) in signing_plan {
+        let Some(identity) =
+            cfg.identities.iter_mut().find(|i| i.id == identity_id)
+        else {
+            continue;
+        };
+        match candidate {
+            Some(key_id) => {
+                identity.signing_key_id = Some(key_id);
+            }
+            None => {
+                identity.signing_key_id = None;
+                identity.require_signed_commits = false;
+            }
+        }
+        changed = true;
+    }
+
     changed
 }
 
@@ -363,10 +508,10 @@ mod tests {
             label: "Work".into(),
             user_name: "Alice".into(),
             user_email: "a@b.com".into(),
-            ssh_key_id: None,
             match_path: Some("~/work".into()),
             host_alias: Some("github.com".into()),
             git_host: Some("github.com".into()),
+            ..Default::default()
         }
     }
 
@@ -545,9 +690,7 @@ mod tests {
                 user_name: "U".into(),
                 user_email: "u@x".into(),
                 ssh_key_id: Some(id_a.clone()),
-                match_path: None,
-                host_alias: None,
-                git_host: None,
+                ..Default::default()
             });
             cfg.ssh_keys.push(SshKey {
                 id: id_a.clone(),
@@ -605,6 +748,218 @@ mod tests {
             assert_eq!(cfg.version, CURRENT_VERSION);
             assert_eq!(cfg.identities[0].ssh_key_id.as_deref(), Some(cfg.ssh_keys[0].id.as_str()));
             assert_eq!(cfg.ssh_keys[0].private_path, "~/.ssh/id_work");
+        });
+    }
+
+    // ── v3 tests ──────────────────────────────────────────────────
+
+    /// A v2 config.json (no signing fields) loaded by v3 code should
+    /// deserialize cleanly and produce default signing values on
+    /// every identity. This is the load-bearing property of
+    /// `#[serde(default)]` on the new fields.
+    #[test]
+    fn test_v2_config_loads_as_v3_with_signing_defaults() {
+        with_temp_home(|| {
+            let path = paths::nicessh_config_path().unwrap();
+            paths::ensure_dir(path.parent().unwrap()).unwrap();
+            // v2 JSON — no requireSignedCommits, no signingKeyId,
+            // no signingKeyKind fields.
+            std::fs::write(
+                &path,
+                r#"{
+                    "version": 2,
+                    "theme": "system",
+                    "projects": [],
+                    "identities": [{
+                        "id": "i1",
+                        "label": "Work",
+                        "userName": "Alice",
+                        "userEmail": "a@co.com",
+                        "sshKeyId": null,
+                        "matchPath": "~/work",
+                        "hostAlias": "github.com",
+                        "gitHost": "github.com"
+                    }],
+                    "sshKeys": []
+                }"#,
+            )
+            .unwrap();
+            let cfg = read().unwrap();
+            assert_eq!(cfg.version, CURRENT_VERSION);
+            let id = &cfg.identities[0];
+            assert!(!id.require_signed_commits);
+            assert_eq!(id.signing_key_id, None);
+            assert_eq!(id.signing_key_kind, SigningKeyKind::Ssh);
+            // Existing fields must round-trip.
+            assert_eq!(id.label, "Work");
+            assert_eq!(id.match_path.as_deref(), Some("~/work"));
+            assert_eq!(id.host_alias.as_deref(), Some("github.com"));
+        });
+    }
+
+    /// v3 default value of `SigningKeyKind` is `Ssh` — verified by
+    /// constructing `Identity::default()` and reading the field.
+    #[test]
+    fn test_signing_key_kind_default_is_ssh() {
+        let id = Identity::default();
+        assert_eq!(id.signing_key_kind, SigningKeyKind::Ssh);
+        assert!(!id.require_signed_commits);
+        assert_eq!(id.signing_key_id, None);
+    }
+
+    /// `Identity::from_input` correctly maps every field of
+    /// `IdentityInput` onto the resulting `Identity`, including the
+    /// v3 signing fields.
+    #[test]
+    fn test_identity_from_input_round_trips_all_fields() {
+        let input = IdentityInput {
+            label: "Personal".into(),
+            user_name: "Bob".into(),
+            user_email: "b@x".into(),
+            ssh_key_id: Some("k1".into()),
+            match_path: Some("~/personal".into()),
+            host_alias: Some("github.com".into()),
+            git_host: Some("github.com".into()),
+            require_signed_commits: true,
+            signing_key_id: Some("k1".into()),
+            signing_key_kind: SigningKeyKind::Ssh,
+        };
+        let id = Identity::from_input(input, "my-id".into());
+        assert_eq!(id.id, "my-id");
+        assert_eq!(id.label, "Personal");
+        assert_eq!(id.user_name, "Bob");
+        assert_eq!(id.user_email, "b@x");
+        assert_eq!(id.ssh_key_id.as_deref(), Some("k1"));
+        assert_eq!(id.match_path.as_deref(), Some("~/personal"));
+        assert!(id.require_signed_commits);
+        assert_eq!(id.signing_key_id.as_deref(), Some("k1"));
+        assert_eq!(id.signing_key_kind, SigningKeyKind::Ssh);
+    }
+
+    /// `signing_config_is_inconsistent` is true only when
+    /// `require_signed_commits` is true and `signing_key_id` is None.
+    /// All other combinations (both on, both off, only key set) are
+    /// consistent — the "only key set" case means the user wants
+    /// signing remembered-but-disabled.
+    #[test]
+    fn test_signing_config_is_inconsistent_table() {
+        // Both on -> consistent
+        let mut id = Identity::default();
+        id.require_signed_commits = true;
+        id.signing_key_id = Some("k1".into());
+        assert!(!id.signing_config_is_inconsistent());
+        // Both off -> consistent
+        id.require_signed_commits = false;
+        id.signing_key_id = None;
+        assert!(!id.signing_config_is_inconsistent());
+        // Only key set -> consistent (remembered-but-disabled)
+        id.require_signed_commits = false;
+        id.signing_key_id = Some("k1".into());
+        assert!(!id.signing_config_is_inconsistent());
+        // On but no key -> INCONSISTENT
+        id.require_signed_commits = true;
+        id.signing_key_id = None;
+        assert!(id.signing_config_is_inconsistent());
+    }
+
+    /// Reconcile step 3: when a signing_key_id points at an
+    /// ssh_keys record that has been deleted (orphaned), the
+    /// identity should fall back to its own ssh_key_id if that
+    /// record still exists. This is the common recovery path.
+    #[test]
+    fn test_reconcile_signing_key_falls_back_to_ssh_key_id() {
+        with_temp_home(|| {
+            let home = paths::home_dir().unwrap();
+            // Two real key files on disk.
+            let dir = home.join(".ssh");
+            std::fs::create_dir_all(&dir).unwrap();
+            let priv_a = dir.join("id_a");
+            let priv_b = dir.join("id_b");
+            std::fs::write(&priv_a, "a").unwrap();
+            std::fs::write(&priv_b, "b").unwrap();
+            let id_a = new_id();
+            let id_b = new_id();
+            let identity_id = new_id();
+            let mut cfg = AppConfig::default();
+            cfg.ssh_keys.push(SshKey {
+                id: id_a.clone(),
+                name: "id_a".into(),
+                private_path: priv_a.to_string_lossy().to_string(),
+                public_path: None, key_type: None, fingerprint: None, comment: None,
+            });
+            cfg.ssh_keys.push(SshKey {
+                id: id_b.clone(),
+                name: "id_b".into(),
+                private_path: priv_b.to_string_lossy().to_string(),
+                public_path: None, key_type: None, fingerprint: None, comment: None,
+            });
+            // Identity points at id_b for ssh, but signing points at
+            // id_a (some hypothetical setup where the signing key got
+            // deleted but the on-disk record still exists).
+            cfg.identities.push(Identity {
+                id: identity_id.clone(),
+                label: "W".into(),
+                user_name: "U".into(),
+                user_email: "u@x".into(),
+                ssh_key_id: Some(id_b.clone()),
+                signing_key_id: Some("missing-signing-key".into()),
+                require_signed_commits: true,
+                ..Default::default()
+            });
+            // Drop id_a's on-disk file but keep id_b.
+            std::fs::remove_file(&priv_a).unwrap();
+            let changed = reconcile_orphan_ssh_keys(&mut cfg);
+            assert!(changed);
+            let id = &cfg.identities[0];
+            // signing_key_id should now point at id_b (fall back to ssh_key_id).
+            assert_eq!(id.signing_key_id.as_deref(), Some(id_b.as_str()));
+            // require_signed_commits must stay true — we recovered.
+            assert!(id.require_signed_commits);
+        });
+    }
+
+    /// When both `signing_key_id` AND `ssh_key_id` are orphaned
+    /// AND step 2 of reconcile cannot find a fallback either,
+    /// step 3 clears `signing_key_id` AND `require_signed_commits`
+    /// together (the latter prevents `write_identity_subfile` from
+    /// emitting a stale `[commit] gpgsign = true` against a
+    /// non-existent key).
+    #[test]
+    fn test_reconcile_signing_key_clears_both_when_no_recovery() {
+        with_temp_home(|| {
+            let home = paths::home_dir().unwrap();
+            let dir = home.join(".ssh");
+            std::fs::create_dir_all(&dir).unwrap();
+            let priv_b = dir.join("id_b");
+            std::fs::write(&priv_b, "b").unwrap();
+            let id_b = new_id();
+            let identity_id = new_id();
+            let mut cfg = AppConfig::default();
+            cfg.ssh_keys.push(SshKey {
+                id: id_b.clone(),
+                name: "id_b".into(),
+                private_path: priv_b.to_string_lossy().to_string(),
+                public_path: None, key_type: None, fingerprint: None, comment: None,
+            });
+            cfg.identities.push(Identity {
+                id: identity_id.clone(),
+                label: "W".into(),
+                user_name: "U".into(),
+                user_email: "u@x".into(),
+                ssh_key_id: Some("missing-ssh-key".into()),
+                signing_key_id: Some("missing-signing-key".into()),
+                require_signed_commits: true,
+                ..Default::default()
+            });
+            // Drop id_b's on-disk file too, so step 2 of
+            // reconcile has no candidate to recover with — the
+            // situation where step 3 also cannot fall back.
+            std::fs::remove_file(&priv_b).unwrap();
+            let changed = reconcile_orphan_ssh_keys(&mut cfg);
+            assert!(changed);
+            let id = &cfg.identities[0];
+            assert_eq!(id.signing_key_id, None);
+            assert!(!id.require_signed_commits);
         });
     }
 }

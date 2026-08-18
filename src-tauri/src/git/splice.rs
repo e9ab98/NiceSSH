@@ -552,6 +552,7 @@ mod rewrite_tests {
             match_path: None,
             host_alias: None,
             git_host: None,
+            ..Default::default()
         }
     }
 
