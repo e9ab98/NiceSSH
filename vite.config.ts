@@ -5,7 +5,7 @@ import path from 'path';
 export default defineConfig({
   plugins: [react()],
   clearScreen: false,
-  server: { port: 1420, strictPort: true },
+  server: { port: 1421, strictPort: true },
   envPrefix: ['VITE_', 'TAURI_'],
   resolve: {
     alias: { '@': path.resolve(__dirname, './src') },
