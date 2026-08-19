@@ -249,15 +249,7 @@ jobs:
             sig_file="${f}.sig"
             custom_fields_args=()
             if [ -f "$sig_file" ]; then
-              sig_json=$(SIGNATURE_PATH="$sig_file" BUNDLE_PATH="$f" python3 -c "
-import json, os, sys
-with open(os.environ['SIGNATURE_PATH']) as fh:
-    sig = fh.read()
-print(json.dumps({
-    'tauri_signature': sig,
-    'tauri_filename':   os.path.basename(os.environ['BUNDLE_PATH']),
-}))
-")
+              sig_json=$(SIGNATURE_PATH="$sig_file" BUNDLE_PATH="$f" python3 -c "import json, os, sys; sig=open(os.environ['SIGNATURE_PATH']).read(); print(json.dumps({'tauri_signature': sig, 'tauri_filename': os.path.basename(os.environ['BUNDLE_PATH'])}))")
               custom_fields_args=(-F "custom_fields=${sig_json}")
               echo "  + embedded signature ($(wc -c < "$sig_file") bytes) for $(basename "$f")"
             else
