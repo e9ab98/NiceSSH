@@ -236,6 +236,16 @@ jobs:
               ;;
           esac
 
+          # Write the multi-line changelog to a temp file ONCE so we
+          # can pass it to curl as `-F "changelog=<file"` instead of
+          # inlining the multi-line markdown into the bash script.
+          # Inlining breaks bash 3.2 (macOS runner) and Git Bash on
+          # Windows, which split the markdown content into "commands"
+          # like `f45bb44` / `6531fd0` and emit "command not found".
+          CHLOG_FILE=$(mktemp)
+          trap 'rm -f "$CHLOG_FILE"' EXIT
+          printf '%s' "${{ steps.changelog.outputs.body }}" > "$CHLOG_FILE"
+
           shopt -s nullglob
           uploaded=0
           failed=0
@@ -269,7 +279,7 @@ jobs:
               -F "branch=${{ github.ref_name }}"
               -F "git_commit=${{ github.sha }}"
               -F "ci_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
-              -F "changelog=${{ steps.changelog.outputs.body }}"
+              -F "changelog=<${CHLOG_FILE}"
             )
 
             if curl "${CURL_ARGS[@]}"; then
