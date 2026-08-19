@@ -34,6 +34,9 @@ fn appconfig_current_version_serializes() {
             match_path: None,
             host_alias: None,
             git_host: None,
+            require_signed_commits: false,
+            signing_key_id: None,
+            signing_key_kind: nicessh_lib::config_store::SigningKeyKind::Ssh,
         }],
         ssh_keys: Vec::new(),
         projects: vec![Project {
