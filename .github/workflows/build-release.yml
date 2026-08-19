@@ -1,5 +1,14 @@
 name: Build & Publish Release
 
+# Zealot channel keys (32-char hex, used by app/controllers/api/apps/upload_controller.rb
+# in Zealot: Channel.find_by(key: params[:channel_key])).
+#
+# nicessh_mac_arm64    e1ba2fc8c83a1af730d3a181e34a3406
+# nicessh_mac_x86      9675db8639b12ef611c6f3a709fc87cf
+# nicessh_win_arm64    2e83f2ae765083c567d668fdfa0fc85b
+# nicessh_win_x86      dd6a4a7722ea0bc4b8a1a4adf98b89ca
+# nicessh_linux_arm64  4188685491dd6bdbf5249d318404b8ee
+# nicessh_linux_x86    8edd65d5970268a3e390e70d210064f3
 on:
   push:
     tags:
@@ -25,24 +34,29 @@ jobs:
             target: aarch64-apple-darwin
             label: darwin-arm64
             bundler_args: "--bundles dmg,app"
+            zealot_channel: e1ba2fc8c83a1af730d3a181e34a3406  # nicessh_mac_arm64
           - os: macos-15-intel
             target: x86_64-apple-darwin
             label: darwin-x64
             bundler_args: "--bundles dmg,app"
+            zealot_channel: 9675db8639b12ef611c6f3a709fc87cf  # nicessh_mac_x86
           - os: windows-2022
             target: x86_64-pc-windows-msvc
             label: windows-x64
             bundler_args: "--bundles msi"
+            zealot_channel: dd6a4a7722ea0bc4b8a1a4adf98b89ca  # nicessh_win_x86
           # Windows ARM64 (Surface Pro X, Snapdragon X laptops). GitHub
           # added windows-11-arm as a GA label in 2024.
           - os: windows-11-arm
             target: aarch64-pc-windows-msvc
             label: windows-arm64
             bundler_args: "--bundles msi"
+            zealot_channel: 2e83f2ae765083c567d668fdfa0fc85b  # nicessh_win_arm64
           - os: ubuntu-22.04
             target: x86_64-unknown-linux-gnu
             label: linux-x64
             bundler_args: "--bundles appimage"
+            zealot_channel: 8edd65d5970268a3e390e70d210064f3  # nicessh_linux_x86
           # Linux ARM64 (Raspberry Pi, AWS Graviton, Asahi). Native build on
           # GitHub's official ARM64 runner; the Install Linux build
           # dependencies step below installs native packages natively.
@@ -50,6 +64,7 @@ jobs:
             target: aarch64-unknown-linux-gnu
             label: linux-arm64
             bundler_args: "--bundles appimage"
+            zealot_channel: 4188685491dd6bdbf5249d318404b8ee  # nicessh_linux_arm64
     runs-on: ${{ matrix.os }}
 
     steps:
@@ -187,3 +202,86 @@ jobs:
           releaseDraft: false
           prerelease: false
           args: --target ${{ matrix.target }} ${{ matrix.bundler_args }}
+
+      # Mirror the bundles to Zealot (https://e9ab98.jzy.cc) so testers can
+      # grab builds from the Zealot web UI / QR code. The Tauri auto-updater
+      # still uses the GitHub Release (endpoints in tauri.conf.json) because
+      # Zealot does not generate a Tauri-compatible latest.json.
+      #
+      # Requires the Zealot channel to have bundle_id set to "*" (or empty)
+      # so the bundle_id_matched validation passes for unparsed .dmg/.msi/
+      # .appimage files. AppInfo (Zealot's parser) cannot read Tauri bundles,
+      # so each upload will have empty metadata on the Zealot side.
+      - name: Upload to Zealot
+        if: success() && matrix.zealot_channel != ''
+        shell: bash
+        env:
+          ZEALOT_HOST: ${{ secrets.ZEALOT_HOST }}
+          ZEALOT_TOKEN: ${{ secrets.ZEALOT_TOKEN }}
+        run: |
+          set -u
+
+          if [ -z "$ZEALOT_HOST" ] || [ -z "$ZEALOT_TOKEN" ]; then
+            echo "::warning::ZEALOT_HOST / ZEALOT_TOKEN not set, skipping Zealot upload"
+            exit 0
+          fi
+
+          case "${{ matrix.target }}" in
+            *-apple-darwin)  ext="dmg" ;;
+            *-windows-msvc)  ext="msi" ;;
+            *-linux-gnu)     ext="appimage" ;;
+            *)
+              echo "::warning::No Zealot upload rule for target ${{ matrix.target }}"
+              exit 0
+              ;;
+          esac
+
+          shopt -s nullglob
+          uploaded=0
+          failed=0
+          for f in src-tauri/target/${{ matrix.target }}/release/bundle/*/*.${ext}; do
+            echo "Uploading $f -> channel ${{ matrix.zealot_channel }}"
+
+            # tauri-action produces a sibling .sig file (minisign signature).
+            # We embed its contents in Zealot's custom_fields jsonb so the
+            # relay (https://e9ab98.jzy.cc/relay/latest.json) can pick it up
+            # when assembling the Tauri-format manifest.
+            sig_file="${f}.sig"
+            custom_fields_args=()
+            if [ -f "$sig_file" ]; then
+              sig_json=$(SIGNATURE_PATH="$sig_file" BUNDLE_PATH="$f" python3 -c "
+import json, os, sys
+with open(os.environ['SIGNATURE_PATH']) as fh:
+    sig = fh.read()
+print(json.dumps({
+    'tauri_signature': sig,
+    'tauri_filename':   os.path.basename(os.environ['BUNDLE_PATH']),
+}))
+")
+              custom_fields_args=(-F "custom_fields=${sig_json}")
+              echo "  + embedded signature ($(wc -c < "$sig_file") bytes) for $(basename "$f")"
+            else
+              echo "::warning::No .sig file at $sig_file; relay will return empty signature"
+            fi
+
+            if curl -fsSL -X POST "$ZEALOT_HOST/api/apps/upload?token=$ZEALOT_TOKEN" \
+                 -F "file=@${f}" \
+                 -F "channel_key=${{ matrix.zealot_channel }}" \
+                 "${custom_fields_args[@]}" \
+                 -F "source=github-actions" \
+                 -F "branch=${{ github.ref_name }}" \
+                 -F "git_commit=${{ github.sha }}" \
+                 -F "ci_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
+                 -F "changelog=${{ steps.changelog.outputs.body }}"; then
+              uploaded=$((uploaded + 1))
+            else
+              failed=$((failed + 1))
+              echo "::warning::Zealot upload failed for $f"
+            fi
+          done
+
+          if [ "$uploaded" -eq 0 ]; then
+            echo "::warning::No ${ext} files found under src-tauri/target/${{ matrix.target }}/release/bundle/"
+          else
+            echo "Uploaded $uploaded file(s), $failed failure(s)"
+          fi

@@ -326,8 +326,7 @@
       "logs": "日志",
       "env": "SSH 环境",
       "updates": "更新",
-      "keys": "SSH 密钥",
-      "signing": "签名"
+      "keys": "SSH 密钥"
     },
     "theme": {
       "mode": "模式",
@@ -390,18 +389,6 @@
       "sshConfig": "SSH 配置视图",
       "history": "历史视图",
       "settings": "设置视图"
-    },
-    "signing": {
-      "testTitle": "测试 commit 签名",
-      "testHint": "选一个开启了签名的身份，点击按钮。NiceSSH 会在临时 repo 里创建一个空 commit 并验证 git 是否真的签名。用来确认你的 SSH/GPG 配置正确后再 push。",
-      "testIdentityLabel": "身份",
-      "testButton": "运行签名测试",
-      "testRunning": "运行中…",
-      "testPassed": "签名验证通过",
-      "testFailed": "签名失败",
-      "noEligibleIdentity": "没有开启签名的身份。先在身份管理里开启。",
-      "signedBy": "签名人：{{email}}",
-      "signerFpr": "Key：{{fpr}}"
     }
   },
   "scanResults": {

@@ -326,8 +326,7 @@
       "logs": "Logs",
       "env": "SSH Environment",
       "updates": "Updates",
-      "keys": "SSH Keys",
-      "signing": "Signing"
+      "keys": "SSH Keys"
     },
     "theme": {
       "mode": "Mode",
@@ -390,18 +389,6 @@
       "sshConfig": "SSH config view",
       "history": "History view",
       "settings": "Settings view"
-    },
-    "signing": {
-      "testTitle": "Test commit signing",
-      "testHint": "Pick an identity with signing enabled and click the button. NiceSSH will create a throwaway commit in a scratch repo and verify whether git actually signs it. Use this to confirm your SSH/GPG setup is wired correctly before pushing.",
-      "testIdentityLabel": "Identity",
-      "testButton": "Run signing test",
-      "testRunning": "Running…",
-      "testPassed": "Signature verified",
-      "testFailed": "Signature failed",
-      "noEligibleIdentity": "No identities have signing enabled. Enable it in the Identities view first.",
-      "signedBy": "Signed by {{email}}",
-      "signerFpr": "Key: {{fpr}}"
     }
   },
   "scanResults": {

@@ -204,6 +204,16 @@ export function ProjectsView() {
   // after app start, OR the user has just removed every project
   // (cache drained to {}).
   useEffect(() => {
+    // Projects store starts with `items: []` and nothing else
+    // triggers a refresh automatically — without this, the list
+    // stays empty on first launch until the user clicks Refresh.
+    // Same "empty-cache only" rule as the repo-config fetches
+    // below: tab switches shouldn't re-fetch.
+    const projectsState = useProjectsStore.getState();
+    if (projectsState.items.length === 0) {
+      void projectsState.refresh();
+    }
+
     const state = useRepoConfigsStore.getState();
     if (Object.keys(state.repoConfigs).length === 0) {
       void state.refreshRepoConfigs();

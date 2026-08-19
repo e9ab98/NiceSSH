@@ -49,7 +49,7 @@
   "plugins": {
     "updater": {
       "endpoints": [
-        "https://github.com/e9ab98/NiceSSH/releases/latest/download/latest.json"
+        "https://e9ab98.jzy.cc/relay/latest.json"
       ],
       "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IDJBMDUxRUNFMkQ0NThGQUMKUldTc2owVXR6aDRGS2dKM1IwMThoRGxlZ01PQXdvWkh0WWtPZ1htWmRpK04rQjdpQjBRbldLRWwK",
       "windows": {
