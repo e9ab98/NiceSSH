@@ -521,7 +521,28 @@
       "submit": "推送",
       "submitForce": "强制推送",
       "success": "{{name}} 推送成功",
-      "label": "推送"
+      "label": "推送",
+      "preflight": {
+        "warnTitle": "推送可能发到错误账户",
+        "verifyTitle": "推送前确认",
+        "submitWarn": "仍然推送",
+        "typeToConfirm": "输入 {{target}} 确认这是有意的",
+        "reason_no_identity": "此项目未绑定身份，git 将使用 fallback 配置推送。",
+        "reason_identity_global_default": "身份来自全局默认，不是项目绑定。",
+        "reason_force_push": "强制推送（--force-with-lease）— 会重写远端历史。",
+        "reason_protocol_mismatch": "绑定了 SSH key 但 remote 是 HTTPS，key 不会被使用。",
+        "reason_ssh_identity_missing_key": "身份没有 SSH key 但 remote 是 SSH。",
+        "reason_host_label_mismatch": "身份名称/邮箱看起来是个人，但 remote host 看起来是工作。",
+        "reason_host_label_inverse_mismatch": "身份名称/邮箱看起来是工作，但 remote host 看起来是个人。",
+        "reason_ssh_test_never_run": "此身份未测试过 SSH 连接。",
+        "reason_ssh_test_failed_recently": "最近 SSH 测试失败，远端可能拒绝你的 key。",
+        "reason_unknown_protocol": "remote URL 协议无法识别。",
+        "reason_no_upstream_force": "无 upstream 强制推送 — git 会在远端创建 ref。",
+        "suggestion_create_identity": "为此项目创建身份",
+        "suggestion_switch_identity": "为此推送切换身份",
+        "suggestion_review_remote_url": "检查 remote URL",
+        "suggestion_run_ssh_test": "先跑 SSH 连接测试"
+      }
     },
     "status": {
       "uncommitted": "{{count}} 处未提交改动",

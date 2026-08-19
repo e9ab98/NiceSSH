@@ -22,6 +22,11 @@ pub struct HistoryEntry {
     pub operation: String,
     pub summary: String,
     pub files: HashMap<String, FileChange>,
+    /// Push-preflight metadata, when this entry represents a
+    /// `git_push` (or other write op that ran preflight). See
+    /// [`PreflightRecord`].
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub preflight: Option<PreflightRecord>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -31,6 +36,51 @@ pub struct HistoryIndexEntry {
     pub operation: String,
     pub summary: String,
     pub file_count: usize,
+}
+
+/// Typed payload attached to a history entry produced by the
+/// push-preflight pipeline. Present only on `operation = "git_push"`
+/// (and any future git-write operation that opts in).
+///
+/// Backward compatibility: this field is `#[serde(default)]` plus
+/// `skip_serializing_if = "Option::is_none"`, so history JSON files
+/// written before this field existed deserialize cleanly to
+/// `preflight = None`. New preflight entries serialize without the
+/// field when `None`, keeping the on-disk format stable.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct PreflightRecord {
+    /// `"safe"` | `"verify"` | `"warn"`. String-typed (not enum)
+    /// to keep `#[serde(default)]` forgiving: if we add a new tier
+    /// later, old readers don't blow up — they just see a string
+    /// they don't recognise.
+    pub tier: String,
+    /// True when the user clicked past a Verify or Warn dialog
+    /// (i.e. they knowingly pushed against a flagged risk).
+    pub user_overrode: bool,
+    /// Machine-readable risk codes from `preflight::evaluate()`.
+    /// Useful for the future "show me all pushes where I overrode
+    /// host_label_mismatch" history view filter.
+    pub risk_codes: Vec<String>,
+    /// Optional commit-range audit (signing status, author
+    /// mismatches, etc.). `None` if the audit was skipped or the
+    /// push had no upstream range to scan.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub commit_audit: Option<CommitAuditSummary>,
+}
+
+/// Compact summary of a commit-range audit. Full per-commit
+/// details (hash, subject, author) are not stored in history —
+/// only the aggregate counts — to keep each history file small
+/// (the limit is 50 entries + the index.json).
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct CommitAuditSummary {
+    pub total: u32,
+    pub signed: u32,
+    pub unsigned: u32,
+    pub author_mismatches: u32,
+    pub signer_mismatches: u32,
 }
 
 const MAX_ENTRIES: usize = 50;
@@ -55,6 +105,10 @@ pub fn commit_change(
         operation: operation.into(),
         summary: summary.into(),
         files: file_changes,
+        // Populated by callers that have preflight context
+        // (currently just ); defaults to None for
+        // all other write paths.
+        preflight: None,
     };
     let dir = paths::history_dir()?;
     paths::ensure_dir(&dir)?;

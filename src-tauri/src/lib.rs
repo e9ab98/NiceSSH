@@ -65,6 +65,7 @@ pub fn run() {
             commands::git::init_repo,
             commands::git::git_status,
             commands::git::git_commit,
+            commands::git::preflight_push,
             commands::git::git_push,
             commands::git::git_pull,
             commands::git::git_fetch,

@@ -151,7 +151,11 @@ pub fn commit(path: String, message: String, add_all: bool) -> Result<String> {
 /// modern git clients do by default and matches user expectation
 /// from the "Quick Actions" row — clicking Push on a fresh clone
 /// should "just work".
-pub fn push(path: String, force: bool) -> Result<String> {
+pub fn push(
+    path: String,
+    force: bool,
+    override_ack: Option<crate::commands::git::OverrideAck>,
+) -> Result<String> {
     validate_repo_path(&path)?;
     // Probe upstream. `git rev-parse --abbrev-ref @{u}` exits
     // non-zero when no upstream is configured; we treat that as
@@ -183,6 +187,40 @@ pub fn push(path: String, force: bool) -> Result<String> {
             "git push failed: {}",
             r.stderr.trim()
         )));
+    }
+    // Record the push in history with preflight metadata.
+    // Best-effort: a history-write failure here doesn't fail
+    // the push itself (the user already saw the git result).
+    let preflight_record = override_ack.as_ref().map(|ack| {
+        crate::history::PreflightRecord {
+            tier: ack.tier.clone(),
+            user_overrode: ack.tier != "safe",
+            risk_codes: ack.risk_codes.clone(),
+            commit_audit: None,
+        }
+    });
+    let summary = match (&preflight_record, force) {
+        (Some(p), true) if p.user_overrode =>
+            format!("Force-pushed with overrides ({})", p.tier),
+        (_, true) => "Force-pushed".to_string(),
+        (Some(p), false) if p.user_overrode =>
+            format!("Pushed with overrides ({})", p.tier),
+        _ => "Pushed".to_string(),
+    };
+    if let Ok(mut entry) = crate::history::commit_change(
+        "git_push",
+        &summary,
+        std::collections::HashMap::new(),
+    ) {
+        entry.preflight = preflight_record;
+        if entry.preflight.is_some() {
+            if let Ok(dir) = crate::paths::history_dir() {
+                let path = dir.join(format!("{}.json", entry.id));
+                if let Ok(json) = serde_json::to_string_pretty(&entry) {
+                    let _ = crate::fs_safety::atomic_write(&path, &json, 0o644);
+                }
+            }
+        }
     }
     Ok(r.stdout.trim().to_string())
 }
@@ -470,7 +508,7 @@ mod integration_tests {
             .unwrap();
 
             // First push: no upstream yet, regular push.
-            push(dir.to_string_lossy().to_string(), false).unwrap();
+            push(dir.to_string_lossy().to_string(), false, None).unwrap();
             // Set upstream so ahead/behind can be computed.
             let _ = Command::new("git")
                 .args([
@@ -530,7 +568,7 @@ mod integration_tests {
             let dir = PathBuf::from(&home).join("not-a-repo");
             std::fs::create_dir_all(&dir).unwrap();
             let err =
-                push(dir.to_string_lossy().to_string(), false).unwrap_err();
+                push(dir.to_string_lossy().to_string(), false, None).unwrap_err();
             assert!(matches!(err, AppError::Validation(_)));
         });
     }

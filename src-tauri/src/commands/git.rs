@@ -1,6 +1,8 @@
-use crate::git::{bind, init, io, ops, splice};
+use crate::git::{bind, init, io, ops, preflight, splice};
 use std::path::Path;
 use std::time::{SystemTime, UNIX_EPOCH};
+
+use serde::Deserialize;
 
 use crate::config_store;
 use crate::error::{AppError, Result};
@@ -1438,12 +1440,214 @@ pub fn git_commit(path: String, message: String, add_all: bool) -> Result<String
     ops::commit(path, message, add_all)
 }
 
+/// User-visible ack that they have read the preflight report and
+/// knowingly want to push anyway. `Some` here means the UI called
+/// `preflight_push`, rendered the dialog, and the user clicked
+/// "Push anyway" (or, for `tier = Safe`, simply called through
+/// without a dialog).
+///
+/// We accept this from the wire so the backend can record the
+/// ack in the history entry (for `user_overrode: true`).
+#[derive(Debug, Clone, Deserialize, Default)]
+#[serde(rename_all = "camelCase")]
+pub struct OverrideAck {
+    /// Which tier was shown to the user. The frontend echoes back
+    /// what `preflight_push` returned so the backend can record
+    /// the actual decision in history.
+    pub tier: String,
+    /// Risk codes the user saw (echoed for the history record).
+    pub risk_codes: Vec<String>,
+    /// For `tier = Warn` with `requires_typed_confirmation`,
+    /// the string the user typed in the confirmation input.
+    /// Recorded for audit purposes; not re-validated server-side
+    /// (the dialog already validated it locally).
+    #[serde(default)]
+    pub typed_override: Option<String>,
+}
+
+/// Build a [`preflight::PushContext`] from `AppConfig` + the
+/// repo's `.git/config`. This is the only place that knows how
+/// to assemble the four pieces of state — keep the resolution
+/// rules here so the evaluator stays pure.
+fn build_push_context(
+    project_id: &str,
+    repo_path: &Path,
+    force: bool,
+    skip_preflight: bool,
+) -> Result<preflight::PushContext> {
+    use std::process::Command;
+
+    let cfg = config_store::read()?;
+    let project = cfg
+        .projects
+        .iter()
+        .find(|p| p.id == project_id)
+        .cloned()
+        .ok_or_else(|| AppError::NotFound(format!("project {}", project_id)))?;
+
+    let repo_cfg = get_repo_git_config_inner(repo_path)?;
+    let protocol = repo_cfg.remote_protocol.clone();
+    let remote_url = repo_cfg.remote_url.clone();
+
+    // ahead/behind: same `git rev-list --left-right` invocation
+    // as ops::status, but inlined here so we don't depend on
+    // ops::status's return shape. Subprocess is allowed because
+    // this is "inspect", not "act on".
+    let ahead = match Command::new("git")
+        .args([
+            "-C", repo_path.to_string_lossy().as_ref(),
+            "rev-list", "--left-right", "--count",
+            "@{u}...HEAD",
+        ])
+        .output()
+    {
+        Ok(out) if out.status.success() => {
+            String::from_utf8_lossy(&out.stdout)
+                .trim().split('\t').nth(1)
+                .and_then(|s| s.parse::<u32>().ok())
+                .unwrap_or(0)
+        }
+        _ => 0,
+    };
+
+    let upstream_branch = Command::new("git")
+        .args([
+            "-C", repo_path.to_string_lossy().as_ref(),
+            "rev-parse", "--abbrev-ref", "@{u}",
+        ])
+        .output()
+        .ok()
+        .filter(|o| o.status.success())
+        .map(|o| String::from_utf8_lossy(&o.stdout).trim().to_string());
+
+    // Resolve identity from project.identityId OR includeIf /
+    // global. Mirrors the JS detectIdentity() priority:
+    //   1. project.identity_id -> tracked identity
+    //   2. repo's [user] + [core] sshCommand from .git/config
+    //      -> attribute to identity whose ssh_key_id matches
+    //   3. global default
+    //   4. none
+    let effective_identity = if let Some(id) = project.identity_id.clone() {
+        cfg.identities
+            .iter()
+            .find(|i| i.id == id)
+            .cloned()
+            .map(|i| preflight::ResolvedIdentity {
+                id: i.id.clone(),
+                label: i.label.clone(),
+                user_name: i.user_name.clone(),
+                user_email: i.user_email.clone(),
+                source: preflight::IdentitySource::Project,
+                ssh_key_path: repo_cfg.ssh_key_path.clone(),
+            })
+    } else if let Some(key_path) = &repo_cfg.ssh_key_path {
+        // Try to attribute to a known identity.
+        if let Some(i) = cfg.identities.iter().find(|i| {
+            cfg.ssh_keys
+                .iter()
+                .find(|k| k.id == i.ssh_key_id.clone().unwrap_or_default())
+                .map(|k| k.private_path == *key_path)
+                .unwrap_or(false)
+        }) {
+            Some(preflight::ResolvedIdentity {
+                id: i.id.clone(),
+                label: i.label.clone(),
+                user_name: i.user_name.clone(),
+                user_email: i.user_email.clone(),
+                source: preflight::IdentitySource::Global,
+                ssh_key_path: Some(key_path.clone()),
+            })
+        } else {
+            // sshKeyPath present but no NiceSSH identity owns it.
+            // Treat as "tracked by config but not by NiceSSH".
+            Some(preflight::ResolvedIdentity {
+                id: String::new(),
+                label: "(untracked SSH key)".into(),
+                user_name: repo_cfg.user_name.clone().unwrap_or_default(),
+                user_email: repo_cfg.user_email.clone().unwrap_or_default(),
+                source: preflight::IdentitySource::None,
+                ssh_key_path: Some(key_path.clone()),
+            })
+        }
+    } else if let Some(gid) = cfg.global_default_identity_id.clone() {
+        cfg.identities
+            .iter()
+            .find(|i| i.id == gid)
+            .cloned()
+            .map(|i| preflight::ResolvedIdentity {
+                id: i.id.clone(),
+                label: i.label.clone(),
+                user_name: i.user_name.clone(),
+                user_email: i.user_email.clone(),
+                source: preflight::IdentitySource::GlobalDefault,
+                ssh_key_path: None,
+            })
+    } else {
+        None
+    };
+
+    Ok(preflight::PushContext {
+        project_path: repo_path.to_path_buf(),
+        remote_url,
+        remote_protocol: protocol,
+        upstream_branch,
+        ahead,
+        force,
+        effective_identity,
+        // SSH test cache lives in the frontend store; the
+        // backend currently doesn't store it. The frontend
+        // passes a pre-built context via a separate path if
+        // it wants to include `last_ssh_test`. For now we
+        // skip this — the rule "ssh_test_never_run" surfaces
+        // as a hint, not a blocker.
+        last_ssh_test: None,
+        skip_preflight,
+    })
+}
+
+/// Compute the preflight report for a push. The frontend calls
+/// this on every Push click; the returned `tier` decides whether
+/// to show a dialog.
+///
+/// `project_id` is required so we can resolve which NiceSSH
+/// identity is bound to the repo. `force` and `skip_preflight`
+/// echo the user's intent.
+#[tauri::command]
+pub fn preflight_push(
+    project_id: String,
+    path: String,
+    force: bool,
+    skip_preflight: bool,
+) -> Result<preflight::PreflightReport> {
+    let repo_path = Path::new(&path);
+    let ctx = build_push_context(&project_id, repo_path, force, skip_preflight)?;
+    Ok(preflight::evaluate(&ctx))
+}
+
 /// Thin-shell IPC command. See [`crate::git::ops::push`].
 /// `force` maps to `--force-with-lease` (NOT `--force`), so a
 /// destructive overwrite is guarded by git itself.
+///
+/// `override_ack` is required when the frontend called
+/// `preflight_push` and saw a `Verify` or `Warn` report. The
+/// backend uses it to record the decision in history. Passing
+/// `None` is allowed (the UI short-circuits to `git_push`
+/// without an ack when `tier = Safe`), but it's good practice
+/// to always pass the ack — the history record is more
+/// useful when populated.
+///
+/// **Risk note**: changing this signature from `git_push(path, force)`
+/// to `git_push(path, force, override_ack)` is an IPC-level break
+/// for any caller built against the old shape. The frontend store
+/// is the only consumer in this codebase and is updated in the
+/// same PR.
 #[tauri::command]
-pub fn git_push(path: String, force: bool) -> Result<String> {
-    ops::push(path, force)
+pub fn git_push(
+    path: String,
+    force: bool,
+    override_ack: Option<OverrideAck>,
+) -> Result<String> {
+    ops::push(path, force, override_ack)
 }
 
 /// Thin-shell IPC command. See [`crate::git::ops::pull`].

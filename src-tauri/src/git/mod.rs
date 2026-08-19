@@ -10,5 +10,6 @@ pub mod bind;
 pub mod init;
 pub mod io;
 pub mod ops;
+pub mod preflight;
 pub mod protocol;
 pub mod splice;

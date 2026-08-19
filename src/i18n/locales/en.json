@@ -521,7 +521,28 @@
       "submit": "Push",
       "submitForce": "Force push",
       "success": "{{name}} pushed successfully",
-      "label": "Push"
+      "label": "Push",
+      "preflight": {
+        "warnTitle": "Push may go to the wrong account",
+        "verifyTitle": "Verify before pushing",
+        "submitWarn": "Push anyway",
+        "typeToConfirm": "Type {{target}} to confirm this is intentional",
+        "reason_no_identity": "This project has no identity bound. The push will use whatever git falls back to.",
+        "reason_identity_global_default": "Identity comes from your global default, not from a project binding.",
+        "reason_force_push": "Force push (--force-with-lease) — this rewrites remote history.",
+        "reason_protocol_mismatch": "SSH key bound but remote is HTTPS — the key won't be used.",
+        "reason_ssh_identity_missing_key": "Identity has no SSH key configured but remote is SSH.",
+        "reason_host_label_mismatch": "Identity name/email looks personal but remote host looks like work.",
+        "reason_host_label_inverse_mismatch": "Identity name/email looks like work but remote host looks personal.",
+        "reason_ssh_test_never_run": "SSH connection has never been tested for this identity.",
+        "reason_ssh_test_failed_recently": "Last SSH test failed. The remote may reject your key.",
+        "reason_unknown_protocol": "Remote URL protocol could not be classified.",
+        "reason_no_upstream_force": "Force push with no upstream — git creates the ref on the remote.",
+        "suggestion_create_identity": "Create an identity for this project",
+        "suggestion_switch_identity": "Switch identity for this push",
+        "suggestion_review_remote_url": "Review the remote URL",
+        "suggestion_run_ssh_test": "Run SSH connection test first"
+      }
     },
     "status": {
       "uncommitted": "{{count}} uncommitted change(s)",

@@ -28,11 +28,72 @@ export const gitStatus = (path: string) =>
 export const gitCommit = (path: string, message: string, addAll: boolean, options?: IpcOptions) =>
   ipc<string>('git_commit', { path, message, addAll }, options);
 
-export const gitPush = (path: string, force: boolean) =>
-  ipc<string>('git_push', { path, force });
+export interface OverrideAck {
+  tier: string;
+  riskCodes: string[];
+  typedOverride?: string | null;
+}
+
+export const gitPush = (
+  path: string,
+  force: boolean,
+  overrideAck: OverrideAck | null,
+) => ipc<string>('git_push', { path, force, overrideAck });
 
 export const gitPull = (path: string, rebase: boolean) =>
   ipc<string>('git_pull', { path, rebase });
+
+// ── Push preflight ──────────────────────────────────────
+export type RiskTier = 'safe' | 'verify' | 'warn';
+
+export type Severity = 'info' | 'warning' | 'danger';
+
+export interface RiskReason {
+  code: string;
+  severity: Severity;
+  messageKey: string;
+}
+
+export interface SuggestionAction {
+  kind: string;
+  labelKey: string;
+  targetId: string | null;
+}
+
+export interface ResolvedIdentityForPush {
+  id: string;
+  label: string;
+  userName: string;
+  userEmail: string;
+  source: 'project' | 'global' | 'globalDefault' | 'none';
+  sshKeyPath: string | null;
+}
+
+export interface SshTestRecord {
+  ok: boolean;
+  message: string;
+}
+
+export interface PreflightReport {
+  tier: RiskTier;
+  reasons: RiskReason[];
+  suggestions: SuggestionAction[];
+  requiresTypedConfirmation: boolean;
+  overrideTarget: string | null;
+}
+
+export const preflightPush = (
+  projectId: string,
+  path: string,
+  force: boolean,
+  skipPreflight: boolean,
+) =>
+  ipc<PreflightReport>('preflight_push', {
+    projectId,
+    path,
+    force,
+    skipPreflight,
+  });
 
 export const gitFetch = (path: string) =>
   ipc<string>('git_fetch', { path });

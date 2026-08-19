@@ -796,6 +796,7 @@ export function ProjectsView() {
           <PushDialog
             open={pushOpen}
             onOpenChange={setPushOpen}
+            projectId={selected.id}
             projectPath={selected.path}
             projectName={selected.name}
             onPushed={refreshStatus}
