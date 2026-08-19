@@ -49,6 +49,9 @@ fn write_config_with_identity_and_project(repo_path: &std::path::Path) -> (Strin
         match_path: Some("~/work".into()),
         host_alias: Some("github.com".into()),
         git_host: Some("github.com".into()),
+        require_signed_commits: false,
+        signing_key_id: None,
+        signing_key_kind: config_store::SigningKeyKind::Ssh,
     };
     let project = Project {
         id: config_store::new_id(),
