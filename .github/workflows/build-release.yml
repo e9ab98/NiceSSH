@@ -33,16 +33,12 @@ jobs:
           - os: macos-14
             target: aarch64-apple-darwin
             label: darwin-arm64
-            # Use --bundles app (not dmg,app). macOS updater artifact is
-            # NiceSSH.app.tar.gz, NOT .dmg — Tauri's minisign verifier
-            # checks the .app.tar.gz.sig against the .app.tar.gz payload,
-            # so the URL we feed to Tauri must point at .app.tar.gz.
-            bundler_args: "--bundles app"
+            bundler_args: "--bundles dmg,app"
             zealot_channel: e1ba2fc8c83a1af730d3a181e34a3406  # nicessh_mac_arm64
           - os: macos-15-intel
             target: x86_64-apple-darwin
             label: darwin-x64
-            bundler_args: "--bundles app"
+            bundler_args: "--bundles dmg,app"
             zealot_channel: 9675db8639b12ef611c6f3a709fc87cf  # nicessh_mac_x86
           - os: windows-2022
             target: x86_64-pc-windows-msvc
@@ -231,7 +227,7 @@ jobs:
           fi
 
           case "${{ matrix.target }}" in
-            *-apple-darwin)  ext="app.tar.gz" ;;
+            *-apple-darwin)  ext="dmg" ;;
             *-windows-msvc)  ext="msi" ;;
             *-linux-gnu)     ext="appimage" ;;
             *)
@@ -240,15 +236,18 @@ jobs:
               ;;
           esac
 
-          # Write the multi-line changelog to a temp file ONCE so we
-          # can pass it to curl as `-F "changelog=<file"` instead of
-          # inlining the multi-line markdown into the bash script.
-          # Inlining breaks bash 3.2 (macOS runner) and Git Bash on
-          # Windows, which split the markdown content into "commands"
-          # like `f45bb44` / `6531fd0` and emit "command not found".
+          # Read the changelog body from release-notes.md (written by the
+          # Generate release notes step). Reading via cat (not via
+          # ${{ steps.x.outputs.body }} substitution) avoids bash parsing
+          # the multi-line content: even inside double quotes, bash
+          # still treats backticks as command substitution, which
+          # breaks because the changelog contains markdown like
+          # `[`8577df8`](url)` whose backticks would try to execute
+          # "8577df8" as a command. Reading the file directly sidesteps
+          # the substitution entirely.
           CHLOG_FILE=$(mktemp)
           trap 'rm -f "$CHLOG_FILE"' EXIT
-          printf '%s' "${{ steps.changelog.outputs.body }}" > "$CHLOG_FILE"
+          cat "$GITHUB_WORKSPACE/release-notes.md" > "$CHLOG_FILE"
 
           shopt -s nullglob
           uploaded=0
