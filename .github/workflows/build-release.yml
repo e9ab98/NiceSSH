@@ -242,29 +242,37 @@ jobs:
           for f in src-tauri/target/${{ matrix.target }}/release/bundle/*/*.${ext}; do
             echo "Uploading $f -> channel ${{ matrix.zealot_channel }}"
 
-            # tauri-action produces a sibling .sig file (minisign signature).
-            # We embed its contents in Zealot's custom_fields jsonb so the
-            # relay (https://e9ab98.jzy.cc/relay/latest.json) can pick it up
-            # when assembling the Tauri-format manifest.
             sig_file="${f}.sig"
-            custom_fields_args=()
+
+            # Build curl args as a single non-empty array. Always has at
+            # least file + channel_key, so we never hit bash 3.2's
+            # `set -u` + empty-array footgun. tauri-action's .sig file
+            # (when TAURI_SIGNING_PRIVATE_KEY is set) is read and embedded
+            # in Zealot's custom_fields jsonb so the relay can pull it
+            # out and serve to the Tauri updater.
+            CURL_ARGS=(
+              -fsSL -X POST "$ZEALOT_HOST/api/apps/upload?token=$ZEALOT_TOKEN"
+              -F "file=@${f}"
+              -F "channel_key=${{ matrix.zealot_channel }}"
+            )
+
             if [ -f "$sig_file" ]; then
               sig_json=$(SIGNATURE_PATH="$sig_file" BUNDLE_PATH="$f" python3 -c "import json, os, sys; sig=open(os.environ['SIGNATURE_PATH']).read(); print(json.dumps({'tauri_signature': sig, 'tauri_filename': os.path.basename(os.environ['BUNDLE_PATH'])}))")
-              custom_fields_args=(-F "custom_fields=${sig_json}")
+              CURL_ARGS+=(-F "custom_fields=${sig_json}")
               echo "  + embedded signature ($(wc -c < "$sig_file") bytes) for $(basename "$f")"
             else
               echo "::warning::No .sig file at $sig_file; relay will return empty signature"
             fi
 
-            if curl -fsSL -X POST "$ZEALOT_HOST/api/apps/upload?token=$ZEALOT_TOKEN" \
-                 -F "file=@${f}" \
-                 -F "channel_key=${{ matrix.zealot_channel }}" \
-                 "${custom_fields_args[@]}" \
-                 -F "source=github-actions" \
-                 -F "branch=${{ github.ref_name }}" \
-                 -F "git_commit=${{ github.sha }}" \
-                 -F "ci_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}" \
-                 -F "changelog=${{ steps.changelog.outputs.body }}"; then
+            CURL_ARGS+=(
+              -F "source=github-actions"
+              -F "branch=${{ github.ref_name }}"
+              -F "git_commit=${{ github.sha }}"
+              -F "ci_url=https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+              -F "changelog=${{ steps.changelog.outputs.body }}"
+            )
+
+            if curl "${CURL_ARGS[@]}"; then
               uploaded=$((uploaded + 1))
             else
               failed=$((failed + 1))
