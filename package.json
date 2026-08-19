@@ -10,7 +10,8 @@
     "tauri": "tauri",
     "lint": "tsc --noEmit",
     "test": "vitest run",
-    "test:watch": "vitest"
+    "test:watch": "vitest",
+    "predev": "# Kill any stale Vite dev server holding port 1420 from a #previous session that was killed uncleanly (Ctrl+C without #wait, terminal closed, etc.). `strictPort: true` in #vite.config.ts means Vite refuses to fall back to 1421.lsof -nP -iTCP:1420 -sTCP:LISTEN -t 2>/dev/null | xargs -r kill -9 2>/dev/null; true"
   },
   "dependencies": {
     "@radix-ui/react-dialog": "^1.1.2",
