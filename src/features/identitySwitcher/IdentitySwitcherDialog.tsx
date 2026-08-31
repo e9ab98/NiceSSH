@@ -20,6 +20,14 @@ interface Props {
   // for the matchPath input (so by default the project path itself
   // becomes the includeIf gitdir prefix).
   projectPath?: string | null;
+  /// Remote protocol of the project, if known. When `'https'` (or
+  /// `'http'`) the switcher treats sshKeyId as optional — HTTPS
+  /// remotes use git-credential, not SSH, so a key binding is moot
+  /// for `git push`/`pull` and would only add noise. When `'ssh'`
+  /// (or anything else, including `null`/`unknown`) we keep the old
+  /// behaviour: reject identities without a key path and show it
+  /// in the row.
+  projectProtocol?: string | null;
   onSelect: (id: string) => Promise<void> | void;
 }
 
@@ -59,7 +67,7 @@ export function computeMatchPathSeed(
   return '';
 }
 
-export function IdentitySwitcherDialog({ open, onOpenChange, identities, currentId, projectPath, onSelect }: Props) {
+export function IdentitySwitcherDialog({ open, onOpenChange, identities, currentId, projectPath, projectProtocol, onSelect }: Props) {
   const { t } = useTranslation();
   const [busy, setBusy] = useState(false);
   // The match path input mirrors `currentId`'s identity.matchPath when
@@ -69,6 +77,47 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
   const [matchPathInput, setMatchPathInput] = useState<string>('');
   const keys = useKeysStore((s) => s.items);
   const refreshKeys = useKeysStore((s) => s.refresh);
+
+  // Protocol state machine. Drives both the list filter and the
+  // dialog title / scope hint. Three cases instead of two because
+  // "no remote URL" is meaningfully different from "SSH remote":
+  //
+  //   * `'https'` / `'http'` — show only user-only identities
+  //     (`sshKeyId === null`). HTTPS remotes use git-credential, not
+  //     SSH, so the SSH key bound to the identity is irrelevant for
+  //     `git push`/`pull` and we hide it from the list to keep
+  //     the user's mental model clean.
+  //   * `'ssh'` / `'git'` / `'unknown'` — show only SSH-keyed
+  //     identities (`sshKeyId !== null`). Rust conservatively writes
+  //     `[core] sshCommand` for all three (unknown-with-URL gets
+  //     the same ssh-style treatment), so a user-only identity
+  //     would produce an sshCommand pointing at a missing key path
+  //     and the push would silently break.
+  //   * `null` / `undefined` — project has no `[remote "origin"]
+  //     url` yet, or `repoConfig` hasn't loaded. Show all
+  //     identities. Whatever the user picks, the Rust backend's
+  //     `apply_identity_to_repo` returns `BindOutcome::NeedsRemote`
+  //     and the `RemoteUrlPromptDialog` asks for a URL before the
+  //     bind completes. Filtering here to SSH-only would silently
+  //     hide user-only identities the user has been using
+  //     everywhere else and leave the dialog empty with no
+  //     recovery path — the bug we're avoiding.
+  type SwitcherMode = 'https' | 'ssh' | 'any';
+  const mode: SwitcherMode =
+    projectProtocol === 'https' || projectProtocol === 'http'
+      ? 'https'
+      : projectProtocol === 'ssh' ||
+          projectProtocol === 'git' ||
+          projectProtocol === 'unknown'
+        ? 'ssh'
+        : 'any';
+
+  const filteredIdentities =
+    mode === 'https'
+      ? identities.filter((id) => !id.sshKeyId)
+      : mode === 'ssh'
+        ? identities.filter((id) => !!id.sshKeyId)
+        : identities; // 'any': no filter — Rust needs-remote will gate the bind
 
   // The dialog now only handles the *project* scope: the global
   // default is set in the Identities view via GlobalDefaultSection.
@@ -139,10 +188,22 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
-        <DialogHeader><DialogTitle>{t('identitySwitcher.title')}</DialogTitle></DialogHeader>
+        <DialogHeader>
+          <DialogTitle>
+            {mode === 'https'
+              ? t('identitySwitcher.titleHttps')
+              : mode === 'ssh'
+                ? t('identitySwitcher.titleSsh')
+                : t('identitySwitcher.title')}
+          </DialogTitle>
+        </DialogHeader>
 
         <p className="text-xs text-text-1 -mt-1">
-          {t('identitySwitcher.scopeHint.project')}
+          {mode === 'https'
+            ? t('identitySwitcher.scopeHint.https')
+            : mode === 'ssh'
+              ? t('identitySwitcher.scopeHint.ssh')
+              : t('identitySwitcher.scopeHint.project')}
         </p>
 
         <div className="space-y-1">
@@ -163,10 +224,18 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
         </div>
 
         <div className="space-y-2 max-h-[40vh] overflow-y-auto">
-          {identities.length === 0 && (
-            <div className="text-text-1 text-sm py-4 text-center">{t('identitySwitcher.empty')}</div>
+          {filteredIdentities.length === 0 && (
+            <div className="text-text-1 text-sm py-4 text-center">
+              {identities.length === 0
+                ? t('identitySwitcher.empty')
+                : mode === 'https'
+                  ? t('identitySwitcher.emptyHttps')
+                  : mode === 'ssh'
+                    ? t('identitySwitcher.emptySsh')
+                    : t('identitySwitcher.empty')}
+            </div>
           )}
-          {identities.map((id) => {
+          {filteredIdentities.map((id) => {
             const isCurrent = id.id === currentId;
             return (
               <button
@@ -185,7 +254,11 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
                   {isCurrent && <Badge variant="outline">{t('common.current')}</Badge>}
                 </div>
                 <div className="text-text-1 text-xs mt-1">{id.userEmail}</div>
-                <div className="text-text-2 text-xs mt-0.5 font-mono truncate">{keys.find((key) => key.id === id.sshKeyId)?.privatePath || t('identities.noKeyBound')}</div>
+                {mode !== 'https' && (
+                  <div className="text-text-2 text-xs mt-0.5 font-mono truncate">
+                    {keys.find((key) => key.id === id.sshKeyId)?.privatePath || t('identities.noKeyBound')}
+                  </div>
+                )}
               </button>
             );
           })}

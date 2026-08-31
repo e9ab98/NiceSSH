@@ -48,7 +48,16 @@ export type RefreshEvent =
   /// The new identity may pull in a different SSH key path or
   /// `[user] name/email`, so the subscriber should refresh
   /// that single project's repo config.
-  | { kind: 'project-assigned'; projectId: string };
+  | { kind: 'project-assigned'; projectId: string }
+  /// A user in the pool was edited. The backend propagates the
+  /// (name, email) change to any identity whose previous values
+  /// matched the OLD pair. Projects that fall back to such an
+  /// identity may need to refresh their repo config. We pass the
+  /// user id so subscribers can decide whether to refresh
+  /// everything (cheap) or only the projects bound to a
+  /// matching identity (currently unused — most callers just
+  /// refresh everything).
+  | { kind: 'user-changed'; userId: string };
 
 type Handler = (event: RefreshEvent) => void;
 

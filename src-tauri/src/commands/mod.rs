@@ -7,5 +7,6 @@ pub mod scanner;
 pub mod settings;
 pub mod ssh_config;
 pub mod ssh_key;
+pub mod user;
 #[cfg(unix)]
 pub mod ssh_add_askpass;

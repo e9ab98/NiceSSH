@@ -115,6 +115,34 @@ pub fn delete_identity(id: String, delete_files: Option<bool>) -> Result<()> {
         &format!("Deleted identity {}", target.label),
     )?;
 
+    // v4 cleanup: remove the per-identity gitconfig subfile and
+    // the includeIf block in `~/.gitconfig` that points at it.
+    // Both the v4 location (`~/.ssh/gitconfig-<label>`) and the
+    // legacy v3 location (`~/.gitconfig-<label>`) are deleted, and
+    // the includeIf removal matches either `path =` shape.
+    // Only do this when no other identity still uses the same
+    // label — the backend does not enforce label uniqueness, so
+    // a sibling identity might still depend on this subfile.
+    // Best-effort: any IO failure here is logged but does not
+    // roll back the identity deletion (the user has already
+    // seen the success toast in the UI).
+    let label_still_in_use = cfg
+        .identities
+        .iter()
+        .any(|i| i.label == target.label);
+    if !label_still_in_use {
+        let label = target.label.clone();
+        let _ = crate::git_config::remove_include_if_for_label(&label);
+        if let Ok(ssh_dir) = paths::ssh_dir() {
+            let new_path = ssh_dir.join(format!("gitconfig-{}", label));
+            let _ = std::fs::remove_file(&new_path);
+        }
+        if let Ok(home) = paths::home_dir() {
+            let legacy_path = home.join(format!(".gitconfig-{}", label));
+            let _ = std::fs::remove_file(&legacy_path);
+        }
+    }
+
     if let Some(resolved) = resolved_key {
         // `resolved` is the full private key file path. We delete the
         // private key and (if present) the matching `<name>.pub` next to

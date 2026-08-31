@@ -17,7 +17,6 @@ import { IdentitySwitcherDialog } from '../features/identitySwitcher/IdentitySwi
 import { RepoAuditDialog } from '../features/repoAudit/RepoAuditDialog';
 import { PassphraseDialog } from '../features/passphraseDialog/PassphraseDialog';
 import { RemoteUrlPromptDialog } from '../features/remotePrompt/RemoteUrlPromptDialog';
-import { HttpsBindConfirmDialog, type HttpsBindChoice } from '../features/httpsBindConfirm/HttpsBindConfirmDialog';
 import { CommitDialog } from '../features/gitOps/CommitDialog';
 import { PullDialog } from '../features/gitOps/PullDialog';
 import { PushDialog } from '../features/gitOps/PushDialog';
@@ -249,6 +248,21 @@ export function ProjectsView() {
   }, [selectedPath, selectedIsRepo]);
   useEffect(() => { void refreshStatus(); }, [refreshStatus, selectedId]);
 
+  // Ensure the selected project's `repoConfig` (and with it the
+  // `remoteProtocol`) is loaded before the user opens the identity
+  // switcher. Without this, `repoConfigs[selected.id]?.remoteProtocol`
+  // is `undefined` and `handleSelect` falls through to the SSH path
+  // (where `!fullKp && !isHttps` rejects key-less HTTPS identities).
+  // Cheap: refreshRepoConfigsForPaths is a no-op if the project is
+  // already cached.
+  const refreshSelectedRepoConfig = useRepoConfigsStore(
+    (s) => s.refreshRepoConfigsForPaths
+  );
+  useEffect(() => {
+    if (!selectedPath) return;
+    void refreshSelectedRepoConfig([selectedPath]);
+  }, [refreshSelectedRepoConfig, selectedPath]);
+
   const repoConfig = selected ? (repoConfigs[selected.id] ?? null) : null;
   const detected = selected ? detectIdentity(selected, identities, repoConfig, keys) : { kind: 'none' as const };
   const identity = detected.kind === 'tracked' ? detected.identity : null;
@@ -306,19 +320,6 @@ export function ProjectsView() {
   // Pending toast i18n key to show *after* a successful retry, so the
   // 'identity applied' message reflects the actual outcome (SSH vs
   // user-only vs needs-remote).
-  // Holds the "we just bound an identity and noticed the remote is
-  // HTTPS" request so the warning dialog can render with full
-  // context. Cleared on dialog close / on the user picking any
-  // option. `repoSnapshot` captures the SSH-able URL to use as a
-  // suggestion when the user picks "switch remote to SSH".
-  const [httpsConfirm, setHttpsConfirm] = useState<{
-    projectId: string;
-    identityId: string;
-    projectName: string;
-    projectPath: string;
-    protocol: 'https' | 'http' | null;
-    remoteUrl: string | null;
-  } | null>(null);
 
   const bindIdentity = async (projectId: string, identityId: string, projectPath: string) => {
     const outcome = await applyIdentityToRepo(projectId, identityId);
@@ -328,28 +329,15 @@ export function ProjectsView() {
       return;
     }
     if (outcome === 'user-only') {
-      // Surface the warning dialog instead of a tiny toast. We need
-      // the project's *display* name + the current remote URL for
-      // context, so peek at the in-memory store + cached config.
-      const projectName = projects.find((p) => p.id === projectId)?.name ?? '';
-      const cfg = repoConfigs[projectId];
-      // The interface for remoteProtocol is 'ssh' | 'https' | 'git'
-      // | 'unknown' | null — we treat anything that's not 'ssh'/'git'
-      // as "uses git-credential" for the purpose of this warning,
-      // and surface the literal 'https' as the heading text (the
-      // classifier groups plain http:// and https:// together).
-      const protocol: 'https' | null =
-        cfg && cfg.remoteProtocol !== 'ssh' && cfg.remoteProtocol !== 'git' && cfg.remoteProtocol !== null
-          ? 'https'
-          : null;
-      setHttpsConfirm({
-        projectId,
-        identityId,
-        projectName,
-        projectPath,
-        protocol,
-        remoteUrl: cfg?.remoteUrl ?? null,
-      });
+      // HTTPS / HTTP remote — the backend wrote only the [user]
+      // block to .git/config (no sshCommand). This is the correct
+      // behaviour (push/pull go through git-credential, not SSH),
+      // so just record the binding in the project store and toast.
+      // The previous "warning dialog explaining why the SSH key
+      // won't take effect here" was noise: users asking to switch
+      // identity on an HTTPS project already know it's HTTPS.
+      try { await assign(projectId, identityId); } catch { /* no-op */ }
+      toast.success(t('projects.outcome.user-only'));
       return;
     }
     // SSH-style: identity fully bound (user + sshCommand). Update
@@ -360,42 +348,6 @@ export function ProjectsView() {
     // store in sync regardless of which branch the user lands in.
     try { await assign(projectId, identityId); } catch { /* no-op */ }
     toast.success(t('projects.outcome.ssh-style'));
-  };
-
-  const handleHttpsConfirmChoice = async (choice: HttpsBindChoice) => {
-    if (!httpsConfirm) return;
-    const { projectId, identityId, projectPath, remoteUrl } = httpsConfirm;
-    if (choice === 'cancel') {
-      // Bind has already happened server-side. Closing the dialog
-      // is the only honest action — we surface a soft toast so the
-      // user knows the bind took effect even though they backed out
-      // of the optional SSH switch.
-      toast.success(t('projects.outcome.user-only'));
-      setHttpsConfirm(null);
-      return;
-    }
-    if (choice === 'continue') {
-      // Identity stays as applied (user-only). Mark in store for
-      // consistency with the existing switcher flow.
-      try { await assign(projectId, identityId); } catch { /* already */ }
-      toast.success(t('projects.outcome.user-only'));
-      setHttpsConfirm(null);
-      return;
-    }
-    // choice === 'change-remote': open RemoteUrlPromptDialog with a
-    // pre-filled SSH URL. Once it saves, we go through the regular
-    // needs-remote retry path so the *next* applyIdentityToRepo call
-    // has a real URL on disk to read.
-    const ssh = deriveSshUrlFromHttps(remoteUrl);
-    setHttpsConfirm(null);
-    setRemotePrompt({
-      projectId,
-      identityId,
-      projectPath,
-      // Carry the suggested SSH URL through the existing
-      // RemoteUrlPromptDialog initialUrl plumbing.
-      prefillUrl: ssh ?? undefined,
-    });
   };
 
   /// Re-reads every backing store from disk and re-scans every
@@ -546,12 +498,27 @@ export function ProjectsView() {
     }
     const target = identities.find((i) => i.id === targetIdentityId);
     if (!target) return;
+    // HTTPS / HTTP remotes use git-credential, not SSH. The
+    // identity's `sshKeyId` is irrelevant for push/pull on these
+    // remotes (and `applyIdentityTo_repo` only writes `sshCommand`
+    // for SSH-style outcomes), so we skip the "no key bound" guard
+    // and the key-unlock dance entirely. Same for the matcher path
+    // match check below.
+    // Defensive: if the store hasn't loaded the repo config yet
+    // (e.g. the user just opened the switcher without ever selecting
+    // this project before), `targetProtocol` is undefined and we
+    // would incorrectly fall through to the SSH path. Kick off a
+    // refresh in the background and treat unknown as 'not https' for
+    // the duration of this submit — the user can retry once the
+    // refresh completes.
+    const targetProtocol = repoConfigs[selected.id]?.remoteProtocol;
+    const isHttps = targetProtocol === 'https' || targetProtocol === 'http';
     const fullKp = privatePathFor(target);
-    if (!fullKp) {
+    if (!fullKp && !isHttps) {
       toast.error(t('identities.noKeyBound'));
       return;
     }
-    if (!recentlyUnlocked[fullKp]) {
+    if (!isHttps && fullKp && !recentlyUnlocked[fullKp]) {
       setSwitcherOpen(false);
       const encrypted = await isKeyEncrypted(fullKp);
       if (!encrypted) {
@@ -776,6 +743,7 @@ export function ProjectsView() {
           identities={identities}
           currentId={initTargetId ? null : (selected?.identityId ?? null)}
           projectPath={selected?.path ?? null}
+          projectProtocol={selected ? (repoConfigs[selected.id]?.remoteProtocol ?? null) : null}
           onSelect={initTargetId ? handleInitSelect : handleSelect}
         />
         {selected && (
@@ -881,19 +849,6 @@ export function ProjectsView() {
         }}
       />
 
-      {/* HTTPS bind warning. Shown when bindIdentity noticed the
-          project’s remote is HTTP(S) and wrote only the [user]
-          block. The user can pick: continue as-is, switch the
-          remote to SSH (which opens RemoteUrlPromptDialog above
-          with a pre-filled URL), or dismiss. */}
-      <HttpsBindConfirmDialog
-        open={!!httpsConfirm}
-        onOpenChange={(v) => { if (!v) setHttpsConfirm(null); }}
-        projectName={httpsConfirm?.projectName}
-        protocol={httpsConfirm?.protocol ?? undefined}
-        remoteUrl={httpsConfirm?.remoteUrl ?? null}
-        onChoose={handleHttpsConfirmChoice}
-      />
     </TooltipProvider>
   );
 }

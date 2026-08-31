@@ -57,14 +57,86 @@ pub fn apply_identity_to_repo(project_id: String, identity_id: String) -> Result
         .ok_or_else(|| AppError::NotFound(format!("project {}", project_id)))?;
     let repo_path = Path::new(&project.path);
 
-    // Single source of truth for "what protocol does this repo
-    // actually speak to its remote with". We deliberately read the
-    // file directly rather than calling `get_repo_git_config` to
-    // avoid an extra serde round-trip and to keep the branch logic in
-    // one place.
-    let repo_cfg = crate::commands::git::get_repo_git_config_inner(repo_path)?;
+    // Read the protocol once so we can:
+    //   1. Skip the v4.0.2 label / key basename check for HTTPS
+    //      remotes (the SSH key is irrelevant on those — push /
+    //      pull go through git-credential, not SSH).
+    //   2. Skip computing `full_key` for HTTPS in the body
+    //      (see the `match outcome` block below).
+    // We read the repo config right after the project lookup so
+    // the rest of the function (guard + outcome + writers) all
+    // see `protocol` and `is_https_protocol` as plain locals.
+    let repo_cfg = crate::commands::git::get_repo_git_config_inner(Path::new(&project.path))?;
     let protocol = repo_cfg.remote_protocol.as_deref().unwrap_or("unknown");
+    let is_https_protocol = matches!(protocol, "https" | "http");
 
+    // v4.0.2 defensive check, relaxed to a soft warning in v4.x:
+    // the original version returned AppError::Validation when the
+    // identity's bound SSH key basename did not match `<safe_label>`
+    // or `id_<safe_label>` (the standard SSH naming convention).
+    // Symptom it was trying to fix: the user re-binds a project and
+    // `.git/config` `[core] sshCommand` ends up pointing at an SSH
+    // key that has nothing to do with the identity's label
+    // (typically because `sshKeyId` was rebound to the wrong
+    // record by an earlier aggressive import-time helper). Hard
+    // blocking, however, was too strict in practice:
+    //
+    //   * Users frequently *intentionally* pick a label that does
+    //     not match the on-disk filename (e.g. `label = "id_ed25519"`
+    //     bound to `~/.ssh/e0ab09e002ab-GitHub`). The label is a
+    //     user-facing identifier; the filename is whatever
+    //     ssh-keygen / OpenSSL / GitHub produced.
+    //   * Once an identity lands in a mismatched state — most
+    //     commonly via the import-time rebind helpers — a hard
+    //     Validation error makes the misconfiguration unfixable
+    //     through the normal "Bind identity" UI. The user is stuck
+    //     until they hand-edit the config JSON or delete the
+    //     identity.
+    //   * A wrong sshCommand is detectable downstream: a real push
+    //     surfaces `Permission denied to <user>` with the same
+    //     diagnostic value.
+    //
+    // New behavior: when the basename does not match the standard
+    // naming forms AND the protocol is not HTTPS/HTTP, record an
+    // `apply_identity_to_repo_label_warning` history entry (visible
+    // in the History view) and continue. The `[core] sshCommand`
+    // written by the splice is unchanged — the user gets exactly
+    // what they asked for, plus a paper-trail entry they can roll
+    // back from. HTTPS identities are skipped entirely because the
+    // SSH key basename is irrelevant for them.
+    if !is_https_protocol {
+        if let Some(key_id) = identity.ssh_key_id.as_deref() {
+            if let Some(key) = cfg.ssh_keys.iter().find(|k| k.id == key_id) {
+                let basename = std::path::Path::new(&key.private_path)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("");
+                let safe_label: String = identity
+                    .label
+                    .chars()
+                    .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+                    .collect();
+                let expected_plain = safe_label.clone();
+                let expected_id_prefixed = format!("id_{}", safe_label);
+                if basename != expected_plain && basename != expected_id_prefixed {
+                    let warn_msg = format!(
+                        "identity '{}' is bound to SSH key '{}' (privatePath: {}); key filename does not match identity label (expected '{}' or '{}'). Binding proceeded anyway — review the bound key in the Identities view if push/pull fails.",
+                        identity.label, key.name, key.private_path, expected_plain, expected_id_prefixed
+                    );
+                    // Best-effort: a failure to record the warning must
+                    // not block the bind itself. History is a UX
+                    // affordance, not a precondition.
+                    let _ = crate::history::commit_change(
+                        "apply_identity_to_repo_label_warning",
+                        &warn_msg,
+                        std::collections::HashMap::new(),
+                    );
+                }
+            }
+        }
+    }
+
+    
     // Decide the bind shape *before* writing anything. The match
     // returns one of three outcomes; in the "needs remote" case we
     // intentionally leave both `.git/config` and the sub-gitconfig
@@ -102,7 +174,22 @@ pub fn apply_identity_to_repo(project_id: String, identity_id: String) -> Result
                 git_config::append_include_if(match_path, &identity.label)?;
             }
         }
-        let full_key = config_store::identity_private_path(&cfg, identity)?;
+        // Resolve the SSH key path only when we actually need it
+        // (i.e. for SSH-style outcomes). For HTTPS / HTTP, the
+        // user-only writer does not emit a `[core] sshCommand` line
+        // at all — it accepts `&full_key` purely for signature
+        // symmetry with `write_identity_subfile` and ignores the
+        // value. Computing it unconditionally used to make any
+        // HTTPS bind crash with `SSH key for identity X not found`
+        // whenever the identity either had no `sshKeyId` or its
+        // `sshKeyId` pointed at a record the scanner's prune pass
+        // had cleaned up — which is the common state for HTTPS-only
+        // identities. We pass an empty string in that case, which
+        // is still a valid argument to the user-only writer.
+        let full_key: String = match outcome {
+            BindOutcome::SshStyle => config_store::identity_private_path(&cfg, identity)?,
+            _ => String::new(),
+        };
         // Windows-only: make sure git can find ssh-keygen for
         // signing. The helper is a no-op on non-Windows platforms
         // and is idempotent on Windows (marker-gated).

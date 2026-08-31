@@ -20,6 +20,7 @@
     "saving": "保存中…",
     "cancel": "取消",
     "delete": "删除",
+    "deleting": "删除中…",
     "edit": "编辑",
     "close": "关闭",
     "retry": "重试",
@@ -169,9 +170,24 @@
     },
     "section": {
       "identities": "项目级身份",
+      "users": "用户",
       "count_one": "{{count}} 个身份",
       "count_other": "{{count}} 个身份"
     }
+  },
+  "usersTab": {
+    "subtitle": "可复用的 git 身份池。每个身份 (name + email) 可被多个密钥/项目身份引用。",
+    "newUser": "+ 新建用户",
+    "importFromGitconfig": "从 ~/.gitconfig 导入",
+    "importing": "导入中…",
+    "empty": "还没有用户。可以手动新建，或从 ~/.gitconfig 自动导入。",
+    "importNothing": "~/.gitconfig 中没有可导入的新用户。",
+    "importSuccess_one": "已导入 {{count}} 个用户",
+    "importSuccess_other": "已导入 {{count}} 个用户",
+    "importFailed": "导入失败：{{message}}",
+    "linkedNone": "未被任何身份引用",
+    "linkedCount_one": "{{count}} 个身份引用中",
+    "linkedCount_other": "{{count}} 个身份引用中"
   },
   "identityForm": {
     "newTitle": "新建身份",
@@ -179,6 +195,8 @@
     "label": "标签",
     "userName": "用户名",
     "userEmail": "邮箱",
+    "pickUser": "复用已有用户",
+    "pickUserPlaceholder": "— 选择已有用户（自动填名称/邮箱）—",
     "keyPath": "密钥路径",
     "labelHint": "密钥文件名,默认建议 id_<算法>(ed25519/rsa)",
     "browseKey": "选择目录…",
@@ -205,6 +223,24 @@
       "kindSsh": "SSH (gpg.format = ssh)",
       "kindGpg": "GPG (使用 gpg.program)"
     }
+  },
+  "userForm": {
+    "newTitle": "新建用户",
+    "editTitle": "编辑用户",
+    "name": "名称",
+    "email": "邮箱",
+    "namePlaceholder": "你的名字",
+    "emailPlaceholder": "you@example.com",
+    "editPropagationHint": "编辑后会自动同步所有引用此 (名称, 邮箱) 的身份。"
+  },
+  "userDelete": {
+    "title": "删除用户",
+    "body": "确定要删除用户 {{name}} &lt;{{email}}&gt; 吗？",
+    "blocked_one": "该用户仍被 {{count}} 个身份引用，无法删除：",
+    "blocked_other": "该用户仍被 {{count}} 个身份引用，无法删除：",
+    "blockedHint": "请先编辑或删除这些身份。",
+    "unused": "该用户当前未被任何身份引用，可以安全删除。",
+    "confirm": "删除用户"
   },
   "keyGenerator": {
     "title": "生成 SSH 密钥",
@@ -234,12 +270,18 @@
   },
   "identitySwitcher": {
     "title": "切换身份",
+    "titleHttps": "切换用户身份",
+    "titleSsh": "切换 SSH 身份",
     "empty": "还没有身份，请先创建一个。",
+    "emptyHttps": "还没有不绑 SSH 密钥的用户身份。请到「身份」→ 新建身份，留空 SSH 密钥。",
+    "emptySsh": "还没有绑 SSH 密钥的身份。请到「身份」→ 新建身份并绑定 SSH 密钥。",
     "scope": {
       "project": "本项目"
     },
     "scopeHint": {
-      "project": "仅修改此仓库的 .git/config"
+      "project": "仅修改此仓库的 .git/config",
+      "https": "HTTPS 仓库仅切换 user.name / user.email，SSH 密钥在此忽略。",
+      "ssh": "SSH 仓库同时切换 SSH 密钥与 user.name / user.email。"
     },
     "matchPathLabel": "匹配路径(includeIf gitdir:)",
     "matchPathPlaceholder": "例如 ~/work/",
@@ -408,7 +450,13 @@
     "scanFailed": "扫描失败：{{message}}",
     "selectAll": "全选",
     "deselectAll": "全不选",
-    "selectedCount": "已选 {{count}} 个"
+    "selectedCount": "已选 {{count}} 个",
+    "bindUser": "绑定到用户（可选）",
+    "pickUserPlaceholder": "— 选择已有用户 —",
+    "createNewUser": "+ 新建用户…",
+    "boundAs": "→ 将以 {{name}} <{{email}}> 身份导入",
+    "scannerValuesDropped": "扫描器识别到 {{name}} <{{email}}>，但用户池里没有匹配项。从下拉框选一个或点击「+ 新建用户…」来导入此密钥。",
+    "userRequired": "导入此密钥需要绑定一个用户。从下拉框选一个或点击「+ 新建用户…」。"
   },
   "update": {
     "toast": {
@@ -460,18 +508,6 @@
     "protocol.none": "无远程",
     "httpsKeyIgnored.title": "SSH key 在此远程下不会生效",
     "httpsKeyIgnored.body": "此项目的 origin 是 HTTPS，git push/pull 会走 git-credential（HTTPS 用账号+密码/令牌），NiceSSH 写入的 sshCommand 会被忽略。要让这把 SSH key 生效：(1) 在代码托管平台（GitHub / GitLab / Gitee 等）添加对应的 SSH 公钥；(2) 在终端执行 git remote set-url origin git@...:user/repo.git；(3) 回到 NiceSSH 重新绑定身份。"
-  },
-  "httpsBindConfirm": {
-    "title": "SSH key 在此远程下不会生效",
-    "heading": "{{project}} 使用 {{protocol}} 远程。",
-    "thisProject": "该项目",
-    "body1": "NiceSSH 将只替换 [user] 块（user.name、user.email）。[core] sshCommand 在此远程下**不会被使用**——本远程使用账号+密码（或令牌）认证，而不是 SSH。",
-    "body2": "如果你希望这把 SSH key 生效：\n1) 在代码托管平台添加对应的 SSH 公钥；\n2) 把本项目的远程地址切换为 SSH 形式；\n3) 然后回到 NiceSSH 重新绑定身份。",
-    "continue": "继续（只切换 user/email）",
-    "changeRemote": "切换远程地址到 SSH…",
-    "cancel": "取消",
-    "sshUrlPrefilled": "已预填 SSH 远程地址：{{url}}",
-    "switchedRemote": "远程地址已保存。正在重新绑定身份…"
   },
   "gitOps": {
     "quickActions": "仓库操作",

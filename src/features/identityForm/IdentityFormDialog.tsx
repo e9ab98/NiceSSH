@@ -5,7 +5,9 @@ import { Input, Label } from '../../components/ui/input';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../../components/ui/tooltip';
 import { Button } from '../../components/ui/button';
 import { useKeysStore, type SshKeyInfo } from '../../store/identities';
+import { useUsersStore } from '../../store/users';
 import type { Identity, SigningKeyKind } from '../../ipc/identities';
+import type { User } from '../../ipc/users';
 function sanitizeLabel(value: string): string {
   return value.replace(/[\\/]+/g, '_');
 }
@@ -48,6 +50,14 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
   useEffect(() => {
     void keysRefresh();
   }, [keysRefresh]);
+  // Pool of saved git users. Used by the "pick from user pool"
+  // combobox above userName/userEmail so the user can reuse an
+  // existing (name, email) pair instead of retyping it.
+  const users = useUsersStore((s) => s.items);
+  const usersRefresh = useUsersStore((s) => s.refresh);
+  useEffect(() => {
+    void usersRefresh();
+  }, [usersRefresh]);
   const signingKeyOptions = useMemo(() => keys, [keys]);
   // (no defaultDropdownId needed — the signingKeyId state is
   //  initialized to initial?.signingKeyId ?? initial?.sshKeyId
@@ -147,6 +157,33 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
               </div>
             )}
             <div className="text-text-2 text-xs mt-1">{t('identityForm.labelHint')}</div>
+          </div>
+          {/* Reuse an existing user from the pool. Picking one
+              copies its (name, email) into the inputs below. The
+              inputs themselves remain freely editable — editing
+              after a pick "unlinks" the identity from the user
+              (value-based linkage, no FK). */}
+          <div>
+            <Label htmlFor="user-pool">{t('identityForm.pickUser')}</Label>
+            <select
+              id="user-pool"
+              value=""
+              onChange={(e) => {
+                const u: User | undefined = users.find((x) => x.id === e.target.value);
+                if (u) {
+                  setUserName(u.name);
+                  setUserEmail(u.email);
+                }
+              }}
+              className="h-9 w-full rounded-md border border-border bg-bg-0 px-3 text-sm"
+            >
+              <option value="">{t('identityForm.pickUserPlaceholder')}</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>
+                  {`${u.name} <${u.email}>`}
+                </option>
+              ))}
+            </select>
           </div>
           <div className="grid grid-cols-2 gap-3">
             <div><Label htmlFor="userName">{t('identityForm.userName')}</Label><Input id="userName" value={userName} onChange={(event) => setUserName(event.target.value)} required /></div>

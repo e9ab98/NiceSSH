@@ -288,20 +288,28 @@ fn merge_into(dst: &mut ScannedIdentity, src: ScannedIdentity) {
     //   3. If only ssh-orphan's exists, keep it.
     //   4. If neither exists (rare - dead config), keep the
     //      first non-empty value as a best-effort display.
-    let dst_exists = dst.key_path.as_deref().map(|p| {
-        crate::paths::expand_home(p).exists()
-    }).unwrap_or(false);
     let src_exists = src.key_path.as_deref().map(|p| {
         crate::paths::expand_home(p).exists()
     }).unwrap_or(false);
-    dst.key_path = match (dst.key_path.as_deref(), src.key_path.as_deref(), dst_exists, src_exists) {
-        (Some(p), _, true, _) => Some(p.to_string()),
-        (Some(_), Some(q), false, true) => Some(q.to_string()),
-        (_, Some(q), _, true) => Some(q.to_string()),
-        (Some(p), _, _, false) => Some(p.to_string()),
-        (None, Some(q), _, _) => Some(q.to_string()),
-        (None, None, _, _) => None,
-        (Some(p), None, _, _) => Some(p.to_string()),
+    // Bug fix (v4.0.1): the previous match kept dst's path whenever
+    // dst's file existed on disk, *including* the case where both
+    // files exist. Because `scan_gitconfig_includes` runs before
+    // `scan_ssh_key_orphans`, that meant a stale `~/.ssh/gitconfig-<label>`
+    // whose `[core] sshCommand = ssh -i <wrong-key>` survived a
+    // re-scan and overrode the orphan's correct path during merge,
+    // silently re-binding the identity to the wrong key. Per the
+    // doc comment right above, when both files exist we should
+    // prefer src (the ssh-orphan, which always came from
+    // `ls ~/.ssh/` and is therefore the canonical "live" key for
+    // this label). Only fall back to dst (gitconfig's sshCommand)
+    // when src's file is genuinely absent.
+    let pick_src = src.key_path.is_some() && src_exists;
+    dst.key_path = if pick_src {
+        src.key_path.clone()
+    } else if dst.key_path.is_some() {
+        dst.key_path.clone()
+    } else {
+        src.key_path.clone()
     };
     // `match_path`: only gitconfig emits this; nothing to merge
     // except first-non-empty.
@@ -410,10 +418,39 @@ fn scan_gitconfig_includes(existing: &ExistingIdentities) -> Result<Vec<ScannedI
             Some(l) => l,
             None => continue,
         };
-        let subfile = paths::home_dir()?
-            .join(".gitconfig")
-            .with_file_name(format!(".gitconfig-{}", label));
-        let (user_name, user_email, key_path) = read_subfile(&subfile);
+        // v4: per-identity subfiles live in ~/.ssh/ next to the keys.
+        // Fall back to the legacy home-dir location so existing
+        // setups keep scanning. The migration in config_store::read()
+        // eventually moves the file into ~/.ssh/ and removes the
+        // legacy copy, but reading both here means an in-flight
+        // upgrade does not silently drop subfiles.
+        let ssh_sub = paths::ssh_dir().ok().map(|d| d.join(format!("gitconfig-{}", label)));
+        let legacy_sub = paths::home_dir()
+            .ok()
+            .map(|h| h.join(format!(".gitconfig-{}", label)));
+        let subfile = match (ssh_sub, legacy_sub) {
+            (Some(p), _) if p.exists() => p,
+            (_, Some(p)) if p.exists() => p,
+            // Neither exists — pass the new path so read_subfile
+            // returns (None, None, None) without an IO error.
+            (Some(p), _) => p,
+            _ => continue,
+        };
+        let (user_name, user_email, mut key_path) = read_subfile(&subfile);
+        // Dirty-subfile guard: if the sshCommand line in the
+        // subfile points at a key file that no longer exists on
+        // disk, the reference is stale (e.g. the user deleted the
+        // key file but left the includeIf block + subfile in
+        // place). We strip the path so the orphan scanner's
+        // `key_path` (which always points at a real `ls ~/.ssh/`
+        // entry) wins during merge_into. user.name / user.email
+        // are preserved — those are usually still wanted even
+        // when the key file is no longer around.
+        if let Some(kp) = key_path.as_deref() {
+            if !crate::paths::expand_home(kp).exists() {
+                key_path = None;
+            }
+        }
         out.push(ScannedIdentity {
             label: label.clone(),
             user_name,
@@ -434,8 +471,20 @@ fn scan_gitconfig_includes(existing: &ExistingIdentities) -> Result<Vec<ScannedI
     Ok(out)
 }
 
+/// Extracts the label from an includeIf `path = ...` directive.
+/// Accepts both the v4 layout (`~/.ssh/gitconfig-<label>`) and
+/// the legacy v3 layout (`~/.gitconfig-<label>`). Older includeIf
+/// blocks written by previous NiceSSH versions keep working — the
+/// scanner still resolves the subfile from the legacy path when
+/// the new one is absent.
 fn label_from_gitconfig_path(p: &str) -> Option<String> {
     let name = Path::new(p).file_name()?.to_string_lossy().to_string();
+    if let Some(stripped) = name.strip_prefix("gitconfig-") {
+        // v4: file basename is `gitconfig-<label>` (no leading dot).
+        // Accept it but also tolerate a stray leading `.gitconfig-`
+        // in case some local tool ever writes the old layout.
+        return Some(stripped.to_string());
+    }
     name.strip_prefix(".gitconfig-").map(|s| s.to_string())
 }
 

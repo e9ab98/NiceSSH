@@ -90,6 +90,11 @@ pub fn run() {
             commands::settings::reset_environment,
             commands::log_viewer::read_log_tail,
             commands::log_viewer::clear_log,
+            commands::user::list_users,
+            commands::user::create_user,
+            commands::user::update_user,
+            commands::user::delete_user,
+            commands::user::import_users_from_gitconfig,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

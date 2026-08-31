@@ -6,11 +6,14 @@ import { Badge } from '../components/ui/badge';
 import { Tooltip, TooltipContent, TooltipProvider, TooltipTrigger } from '../components/ui/tooltip';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '../components/ui/dialog';
 import { useIdentitiesStore, useKeysStore } from '../store/identities';
+import { useUsersStore } from '../store/users';
 import { useGlobalDefaultStore } from '../store/globalDefault';
 import { IdentityFormDialog } from '../features/identityForm/IdentityFormDialog';
 import { KeyGeneratorDialog } from '../features/keyGenerator/KeyGeneratorDialog';
 import { ScanResultsDialog } from '../features/scanResults/ScanResultsDialog';
 import { ClearGlobalDefaultDialog } from '../features/clearGlobalDefault/ClearGlobalDefaultDialog';
+import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
+import { UsersTab } from '../features/usersTab/UsersTab';
 import { scanExistingIdentities, type ScannedIdentity } from '../ipc/identities';
 import { getGlobalGitConfig, type GlobalGitConfig } from '../ipc/git';
 import { toast } from 'sonner';
@@ -111,7 +114,7 @@ function GlobalDefaultSection({
   );
 }
 
-export function IdentitiesView() {
+export function IdentitiesTab() {
   const { t } = useTranslation();
   const { items, loading, refresh, create, update, remove } = useIdentitiesStore();
   // Read keys from the shared store so other views
@@ -334,7 +337,7 @@ export function IdentitiesView() {
 
   return (
     <TooltipProvider>
-      <div className="p-6 max-w-4xl">
+      <div>
         <h1 className="text-2xl font-semibold mb-4">{t('identities.globalDefault.title')}</h1>
         <GlobalDefaultSection
           identities={items}
@@ -561,5 +564,40 @@ export function IdentitiesView() {
         </Dialog>
       </div>
     </TooltipProvider>
+  );
+}
+
+/**
+ * Top-level identities section. Two tabs:
+ *   - Users: pool of git (name, email) pairs that can be reused
+ *     across multiple identities / keys. New in this release.
+ *   - Identities: existing registry of identities (each tied to
+ *     a key, with optional project scoping). Unchanged behaviour.
+ *
+ *   The default tab is Identities — preserves the historical
+ *   landing for existing users.
+ */
+export function IdentitiesView() {
+  const { t } = useTranslation();
+  const refreshUsers = useUsersStore((s) => s.refresh);
+  const refreshIdentities = useIdentitiesStore((s) => s.refresh);
+  useEffect(() => {
+    void refreshUsers();
+    void refreshIdentities();
+  }, [refreshUsers, refreshIdentities]);
+
+  return (
+    <Tabs defaultValue="identities" className="p-6 max-w-4xl">
+      <TabsList>
+        <TabsTrigger value="identities">{t('identities.section.identities')}</TabsTrigger>
+        <TabsTrigger value="users">{t('identities.section.users')}</TabsTrigger>
+      </TabsList>
+      <TabsContent value="identities">
+        <IdentitiesTab />
+      </TabsContent>
+      <TabsContent value="users">
+        <UsersTab />
+      </TabsContent>
+    </Tabs>
   );
 }

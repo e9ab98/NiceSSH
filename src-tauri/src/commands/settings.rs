@@ -226,7 +226,13 @@ fn strip_nicessh_includes_and_subfiles(
                         .and_then(|n| n.to_str())
                         .unwrap_or("")
                         .to_string();
-                    if let Some(label) = basename.strip_prefix(".gitconfig-") {
+                    // Accept both v4 (`gitconfig-<label>`) and legacy
+                    // (`.gitconfig-<label>`) basenames. We strip the
+                    // optional leading dot before checking for the
+                    // `gitconfig-` prefix, so both shapes resolve to
+                    // the same label.
+                    let stripped_dot = basename.strip_prefix('.').unwrap_or(&basename);
+                    if let Some(label) = stripped_dot.strip_prefix("gitconfig-") {
                         current_label = Some(label.to_string());
                         report.removed_per_identity_gitconfigs += 1;
                     }

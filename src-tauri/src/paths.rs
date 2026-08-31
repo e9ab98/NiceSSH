@@ -107,18 +107,48 @@ pub fn gitconfig_path() -> Result<PathBuf> {
     Ok(home_dir()?.join(".gitconfig"))
 }
 
+/// Path of the per-identity gitconfig subfile.
+///
+/// As of v4 we keep these alongside the SSH keys under `~/.ssh/`
+/// (e.g. `~/.ssh/gitconfig-work`) instead of the older
+/// `~/.gitconfig-<label>` layout. Three reasons:
+///
+///   1. `~/.ssh/` is chmod 700; the keys themselves are 600. Keeping
+///      the gitconfig snippet next to them stays inside the same
+///      security boundary.
+///   2. It groups everything related to an identity (its key, its
+///      `[gpg] signingkey`, its `[user] name/email`) under one
+///      directory — easier to back up, easier to debug.
+///   3. Users who `rm -rf ~/.ssh/*` to nuke their identity also
+///      automatically nuke the per-identity gitconfig instead of
+///      leaving a dangling `~/.gitconfig-<label>` that points at
+///      a missing key.
+///
+/// Existing `~/.gitconfig-<label>` files are still readable via
+/// the scanner's fallback path; a one-shot migration in
+/// `config_store::read()` moves them into `~/.ssh/` on first run
+/// after the upgrade.
 pub fn gitconfig_for_identity_path(label: &str) -> Result<PathBuf> {
-    let safe = label
-        .chars()
-        .map(|c| {
-            if c.is_ascii_alphanumeric() {
-                c.to_ascii_lowercase()
-            } else {
-                '_'
-            }
-        })
-        .collect::<String>();
+    let safe = safe_label(label);
+    Ok(ssh_dir()?.join(format!("gitconfig-{}", safe)))
+}
+
+/// Legacy `~/.gitconfig-<label>` path. Kept for the migration
+/// (move on first read) and the scanner fallback (read subfile
+/// from this location if the new one is absent).
+pub fn legacy_gitconfig_for_identity_path(label: &str) -> Result<PathBuf> {
+    let safe = safe_label(label);
     Ok(home_dir()?.join(format!(".gitconfig-{}", safe)))
+}
+
+/// Sanitise a label into a filename-safe lowercase form. Used by
+/// both `gitconfig_for_identity_path` and its legacy counterpart
+/// so the on-disk names match.
+pub fn safe_label(label: &str) -> String {
+    label
+        .chars()
+        .map(|c| if c.is_ascii_alphanumeric() { c.to_ascii_lowercase() } else { '_' })
+        .collect()
 }
 
 pub fn history_dir() -> Result<PathBuf> {
@@ -237,8 +267,9 @@ mod tests {
     fn test_gitconfig_for_identity_lowercases_and_sanitizes() {
         with_temp_home("gitcfg_id", || {
             let p = gitconfig_for_identity_path("Work Account!").unwrap();
+            // v4: file lives in ~/.ssh/ with no leading dot.
             assert!(
-                p.to_string_lossy().ends_with(".gitconfig-work_account_"),
+                p.to_string_lossy().ends_with("/.ssh/gitconfig-work_account_"),
                 "got: {}",
                 p.display()
             );

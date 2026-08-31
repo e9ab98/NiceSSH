@@ -164,14 +164,35 @@ fn gitdir_matches(gitdir: &str, project_path: &str) -> bool {
 
 pub fn append_include_if(gitdir: &str, label: &str) -> Result<()> {
     let path = paths::gitconfig_path()?;
-    let before = if path.exists() {
+    let mut before = if path.exists() {
         fs::read_to_string(&path)?
     } else {
         String::new()
     };
-    let new_block = format!(
-        "\n[includeIf \"gitdir:{}/\"]\n    path = ~/.gitconfig-{}\n",
+
+    // The on-disk subfile path is `~/.ssh/gitconfig-{safe_label(label)}`
+    // (set in `paths::gitconfig_for_identity_path`). The includeIf
+    // entry that references it must use the *same* sanitised form;
+    // the previous implementation wrote the raw `label` straight in,
+    // so any label containing characters that `safe_label` rewrites
+    // (anything outside ASCII alphanumeric — spaces, `!`, `.`, CJK,
+    // …) made the includeIf block point at a file that did not
+    // exist. Migrate the legacy raw-label block in-place so that
+    // existing users pick up the fix on the next bind without us
+    // duplicating the entry.
+    let raw_block = format!(
+        "\n[includeIf \"gitdir:{}/\"]\n    path = ~/.ssh/gitconfig-{}\n",
         gitdir, label
+    );
+    if before.contains(&raw_block) {
+        before = before.replace(&raw_block, "");
+    }
+
+    // v4: subfiles live in ~/.ssh/ next to the keys themselves.
+    let safe = paths::safe_label(label);
+    let new_block = format!(
+        "\n[includeIf \"gitdir:{}/\"]\n    path = ~/.ssh/gitconfig-{}\n",
+        gitdir, safe
     );
     if before.contains(&new_block) {
         return Ok(());
@@ -193,6 +214,88 @@ pub fn append_include_if(gitdir: &str, label: &str) -> Result<()> {
     }
     fs_safety::atomic_write(&path, &after, 0o644)?;
     Ok(())
+}
+
+/// Removes the `[includeIf "gitdir:..."] path = ...` block for the
+/// given label from `~/.gitconfig`. No-op if the file does not
+/// exist or the block is absent. Matches both the v4 layout
+/// (`path = ~/.ssh/gitconfig-<label>`) and the legacy v3 layout
+/// (`path = ~/.gitconfig-<label>`) so a delete issued before the
+/// migration finishes still cleans up the leftover reference.
+///
+/// Returns `true` if a block was actually removed, `false` if
+/// nothing matched (still considered success — the caller just
+/// moves on).
+pub fn remove_include_if_for_label(label: &str) -> Result<bool> {
+    use crate::paths;
+    let path = paths::gitconfig_path()?;
+    if !path.exists() {
+        return Ok(false);
+    }
+    let before = std::fs::read_to_string(&path)?;
+    let label_str = label.to_string();
+    let ssh_target = format!("~/.ssh/gitconfig-{}", label_str);
+    let legacy_target = format!("~/.gitconfig-{}", label_str);
+    let lines: Vec<&str> = before.lines().collect();
+    let mut out: Vec<String> = Vec::with_capacity(lines.len());
+    let mut i = 0;
+    let mut removed_any = false;
+    while i < lines.len() {
+        let line = lines[i];
+        let trimmed = line.trim_start();
+        if trimmed.starts_with("[includeIf") {
+            // Walk the block: header line + body lines until the
+            // next top-level `[section]` header (or EOF). Drop
+            // the whole block if its `path =` directive matches
+            // our label in either layout.
+            let mut j = i + 1;
+            let mut is_match = false;
+            while j < lines.len() {
+                let inner = lines[j].trim_start();
+                if inner.starts_with('[') {
+                    break;
+                }
+                if !is_match && inner.starts_with("path") {
+                    if let Some((_, v)) = inner.split_once('=') {
+                        let value = v.trim().trim_matches('"').trim();
+                        if value == ssh_target || value == legacy_target {
+                            is_match = true;
+                        }
+                    }
+                }
+                j += 1;
+            }
+            if is_match {
+                i = j;
+                removed_any = true;
+                continue;
+            } else {
+                out.push(line.to_string());
+                i += 1;
+            }
+        } else {
+            out.push(line.to_string());
+            i += 1;
+        }
+    }
+    let mut after = out.join("\n");
+    if before.ends_with('\n') && !after.ends_with('\n') {
+        after.push('\n');
+    }
+    if after == before {
+        return Ok(false);
+    }
+    history::commit_change(
+        "git_config_remove_include",
+        &format!("Removed includeIf block for label {}", label),
+        std::iter::once((
+            path.to_string_lossy().to_string(),
+            FileChange { before: before.clone(), after: after.clone() },
+        ))
+        .collect(),
+    )?;
+    crate::fs_safety::atomic_write(&path, &after, 0o644)?;
+    Ok(removed_any)
 }
 
 pub fn write_identity_subfile(

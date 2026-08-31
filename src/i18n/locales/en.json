@@ -20,6 +20,7 @@
     "saving": "Saving…",
     "cancel": "Cancel",
     "delete": "Delete",
+    "deleting": "Deleting…",
     "edit": "Edit",
     "close": "Close",
     "retry": "Retry",
@@ -169,9 +170,24 @@
     },
     "section": {
       "identities": "Project identities",
+      "users": "Users",
       "count_one": "{{count}} identity",
       "count_other": "{{count}} identities"
     }
+  },
+  "usersTab": {
+    "subtitle": "A reusable pool of git identities. Each (name, email) can be referenced by multiple keys or project identities.",
+    "newUser": "+ New User",
+    "importFromGitconfig": "Import from ~/.gitconfig",
+    "importing": "Importing…",
+    "empty": "No users yet. Create one manually, or import from ~/.gitconfig.",
+    "importNothing": "No new users to import from ~/.gitconfig.",
+    "importSuccess_one": "Imported {{count}} user",
+    "importSuccess_other": "Imported {{count}} users",
+    "importFailed": "Import failed: {{message}}",
+    "linkedNone": "Not referenced by any identity",
+    "linkedCount_one": "{{count}} identity references this user",
+    "linkedCount_other": "{{count}} identities reference this user"
   },
   "identityForm": {
     "newTitle": "New Identity",
@@ -179,6 +195,8 @@
     "label": "Label",
     "userName": "User Name",
     "userEmail": "User Email",
+    "pickUser": "Pick an existing user",
+    "pickUserPlaceholder": "— Pick an existing user (auto-fill name & email) —",
     "keyPath": "Key Path",
     "labelHint": "Key file name. Convention: id_<algorithm> (ed25519/rsa)",
     "browseKey": "Browse folder…",
@@ -205,6 +223,24 @@
       "kindSsh": "SSH (gpg.format = ssh)",
       "kindGpg": "GPG (uses gpg.program)"
     }
+  },
+  "userForm": {
+    "newTitle": "New User",
+    "editTitle": "Edit User",
+    "name": "Name",
+    "email": "Email",
+    "namePlaceholder": "Your Name",
+    "emailPlaceholder": "you@example.com",
+    "editPropagationHint": "Edits will automatically propagate to all identities that reference this (name, email)."
+  },
+  "userDelete": {
+    "title": "Delete User",
+    "body": "Delete user {{name}} <{{email}}>?",
+    "blocked_one": "This user is still referenced by {{count}} identity and cannot be deleted:",
+    "blocked_other": "This user is still referenced by {{count}} identities and cannot be deleted:",
+    "blockedHint": "Edit or delete those identities first.",
+    "unused": "This user is not referenced by any identity and can be safely deleted.",
+    "confirm": "Delete user"
   },
   "keyGenerator": {
     "title": "Generate SSH Key",
@@ -234,12 +270,18 @@
   },
   "identitySwitcher": {
     "title": "Switch Identity",
+    "titleHttps": "Switch User Identity",
+    "titleSsh": "Switch SSH Identity",
     "empty": "No identities. Create one first.",
+    "emptyHttps": "No user identities. Open Identities → New Identity and leave the SSH key empty.",
+    "emptySsh": "No SSH identities. Open Identities → New Identity and bind an SSH key.",
     "scope": {
       "project": "This project"
     },
     "scopeHint": {
-      "project": "Affects only this repository's .git/config"
+      "project": "Affects only this repository's .git/config",
+      "https": "HTTPS repos only switch user.name / user.email. SSH keys are ignored.",
+      "ssh": "SSH repos switch both the SSH key and user.name / user.email."
     },
     "matchPathLabel": "Match path (includeIf gitdir:)",
     "matchPathPlaceholder": "e.g. ~/work/",
@@ -408,7 +450,13 @@
     "scanFailed": "Scan failed: {{message}}",
     "selectAll": "Select all",
     "deselectAll": "Deselect all",
-    "selectedCount": "{{count}} selected"
+    "selectedCount": "{{count}} selected",
+    "bindUser": "Bind to user (optional)",
+    "pickUserPlaceholder": "— Pick an existing user —",
+    "createNewUser": "+ New user…",
+    "boundAs": "→ Will import as {{name}} <{{email}}>",
+    "scannerValuesDropped": "Scanner detected {{name}} <{{email}}> — no matching user in the pool. Pick one from the dropdown or click + New user… to import this key.",
+    "userRequired": "A user must be bound to import this key. Pick one from the dropdown or click + New user…"
   },
   "update": {
     "toast": {
@@ -460,18 +508,6 @@
     "protocol.none": "No remote",
     "httpsKeyIgnored.title": "SSH key will not apply on this remote",
     "httpsKeyIgnored.body": "This project's origin is HTTPS, so git push/pull will use git-credential (HTTPS uses account + password / token), and the sshCommand entry written by NiceSSH will be ignored. To make this SSH key take effect: (1) add the matching public key on your git host (GitHub / GitLab / Gitee ...), then (2) in a terminal run git remote set-url origin git@...:user/repo.git, then (3) come back and rebind the identity."
-  },
-  "httpsBindConfirm": {
-    "title": "SSH key will not apply on this remote",
-    "heading": "{{project}} uses a {{protocol}} remote.",
-    "thisProject": "This project",
-    "body1": "NiceSSH will only swap the [user] block (user.name, user.email). Anything written under [core] sshCommand is **ignored** here — this remote uses account + password (or token) authentication, not SSH.",
-    "body2": "If you want this SSH key to take effect:\n1) Add the matching public key on your git host.\n2) Switch this project's remote to an SSH URL.\n3) Then come back and bind the identity again.",
-    "continue": "Continue (user/email only)",
-    "changeRemote": "Switch remote to SSH…",
-    "cancel": "Cancel",
-    "sshUrlPrefilled": "Pre-filled SSH URL: {{url}}",
-    "switchedRemote": "Remote URL saved. Re-applying identity…"
   },
   "gitOps": {
     "quickActions": "Repository",

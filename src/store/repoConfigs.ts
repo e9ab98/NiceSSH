@@ -155,6 +155,13 @@ export const useRepoConfigsStore = create<State>((set, get) => {
       // The bound identity flipped — re-read that single project.
       const proj = projects.find((p) => p.id === event.projectId);
       if (proj) void get().refreshRepoConfigsForPaths([proj.path]);
+    } else if (event.kind === 'user-changed') {
+      // The backend propagated the (name, email) change to every
+      // identity whose previous values matched the OLD pair.
+      // We don't know which identities were affected from the
+      // event alone, so refresh everything — repo-config reads
+      // are cheap relative to a user-driven UI cycle.
+      void get().refreshRepoConfigs();
     }
   });
 
