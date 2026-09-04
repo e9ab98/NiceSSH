@@ -14,6 +14,12 @@ export interface Identity {
   matchPath: string | null;
   hostAlias: string | null;
   gitHost: string | null;
+  /// SSH port to use when connecting to `gitHost`. `null` means
+  /// the default port (22). When set, the per-identity
+  /// `[core] sshCommand` in the sub-gitconfig is rewritten to
+  /// include `-p <port>` so `ssh://git@host:port/...` URLs and the
+  /// `git@host:path` shorthand both connect to the right port.
+  sshPort: number | null;
   // ── v3: commit signing config ────────────────────────────────
   /// When true, commits authored under this identity should be signed.
   /// Drives `[commit] gpgsign = true` in the per-identity sub-gitconfig.

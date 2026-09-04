@@ -303,6 +303,15 @@ pub fn write_identity_subfile(
     user_name: &str,
     user_email: &str,
     key_path: &str,
+    // SSH port to inject into `[core] sshCommand` as `-p <port>`.
+    // `None` (default port 22) keeps the legacy `sshCommand`
+    // shape verbatim. When set, the produced line becomes
+    // `ssh -i <key> -p <port> -o IdentitiesOnly=yes` so a single
+    // identity can target a non-default port (Synology Git
+    // Server, self-hosted GitLab, etc.) without the user having
+    // to switch their remote URL between `ssh://host:port/path`
+    // and `git@host:path` shorthand.
+    ssh_port: Option<u16>,
     signing: Option<&IdentitySigning>,
 ) -> Result<()> {
     let path = paths::gitconfig_for_identity_path(label)?;
@@ -316,9 +325,13 @@ pub fn write_identity_subfile(
     if let Some(s) = signing {
         new_content.push_str(&format!("    signingkey = {}\n", s.key_path));
     }
+    let port_suffix = match ssh_port {
+        Some(p) => format!(" -p {}", p),
+        None => String::new(),
+    };
     new_content.push_str(&format!(
-        "[core]\n    sshCommand = ssh -i {} -o IdentitiesOnly=yes\n",
-        key_path
+        "[core]\n    sshCommand = ssh -i {}{} -o IdentitiesOnly=yes\n",
+        key_path, port_suffix,
     ));
     // Signing-related sections: always emit `[gpg] format = ssh`
     // when the kind is `Ssh` so git knows where to look for the
@@ -534,7 +547,7 @@ mod tests {
     #[test]
     fn test_write_identity_subfile_creates_file() {
         with_temp_home(|| {
-            write_identity_subfile("work", "Alice", "a@co.com", "~/.ssh/id_work", None).unwrap();
+            write_identity_subfile("work", "Alice", "a@co.com", "~/.ssh/id_work", None, None).unwrap();
             let p = paths::gitconfig_for_identity_path("work").unwrap();
             let raw = fs::read_to_string(&p).unwrap();
             assert!(raw.contains("name = Alice"));
@@ -579,7 +592,7 @@ mod tests {
                 "Alice",
                 "a@x",
                 "~/.ssh/id_nosign",
-                None,
+                None, None,
             )
             .unwrap();
             let raw = std::fs::read_to_string(paths::gitconfig_for_identity_path("nosign").unwrap()).unwrap();
@@ -610,7 +623,7 @@ mod tests {
                 "Alice",
                 "a@x",
                 "~/.ssh/id_work",
-                Some(&s),
+                None, Some(&s),
             )
             .unwrap();
             let raw = std::fs::read_to_string(paths::gitconfig_for_identity_path("w").unwrap()).unwrap();
@@ -639,7 +652,7 @@ mod tests {
                 "Alice",
                 "a@x",
                 "~/.ssh/id_work",
-                Some(&s),
+                None, Some(&s),
             )
             .unwrap();
             let raw = std::fs::read_to_string(paths::gitconfig_for_identity_path("w").unwrap()).unwrap();
@@ -667,7 +680,7 @@ mod tests {
                 "Alice",
                 "a@x",
                 "~/.ssh/id_work",
-                Some(&s),
+                None, Some(&s),
             )
             .unwrap();
             let raw = std::fs::read_to_string(paths::gitconfig_for_identity_path("w").unwrap()).unwrap();
@@ -692,10 +705,10 @@ mod tests {
                 key_path: "~/.ssh/id_x".into(),
                 require_signed_commits: true,
             };
-            write_identity_subfile("x", "U", "u@x", "~/.ssh/id_x", Some(&s)).unwrap();
+            write_identity_subfile("x", "U", "u@x", "~/.ssh/id_x", None, Some(&s)).unwrap();
             // Second write: signing off. The `[commit] gpgsign =
             // true` and `[gpg] format = ssh` lines must disappear.
-            write_identity_subfile("x", "U", "u@x", "~/.ssh/id_x", None).unwrap();
+            write_identity_subfile("x", "U", "u@x", "~/.ssh/id_x", None, None).unwrap();
             let raw = std::fs::read_to_string(paths::gitconfig_for_identity_path("x").unwrap()).unwrap();
             assert!(!raw.contains("signingkey"), "signingkey should be gone: got
 {raw}");

@@ -9,7 +9,26 @@ import { updateIdentity } from '../../ipc/identities';
 import { toast } from 'sonner';
 import { cn } from '../../lib/utils';
 import type { Identity } from '../../ipc/identities';
+
+// Encoded by IdentitySwitcherDialog to signal "this is a User pick,
+// not an Identity pick" — ProjectsView splits on this prefix and
+// routes to `applyUserToRepo` instead of `applyIdentityToRepo`. We
+// keep the prefix here (next to the dialog that produces it) rather
+// than exporting it from the IPC module so the encoding stays an
+// implementation detail of the dialog<->view contract.
+const USER_PICK_PREFIX = 'user:';
+
+export function encodeUserPick(userId: string): string {
+  return `${USER_PICK_PREFIX}${userId}`;
+}
+export function isUserPick(id: string): boolean {
+  return id.startsWith(USER_PICK_PREFIX);
+}
+export function decodeUserPick(id: string): string {
+  return id.slice(USER_PICK_PREFIX.length);
+}
 import { useKeysStore, useIdentitiesStore } from '../../store/identities';
+import { useUsersStore } from '../../store/users';
 
 interface Props {
   open: boolean;
@@ -77,6 +96,12 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
   const [matchPathInput, setMatchPathInput] = useState<string>('');
   const keys = useKeysStore((s) => s.items);
   const refreshKeys = useKeysStore((s) => s.refresh);
+  // User pool — only consumed when projectProtocol is https/http.
+  // Subscribing unconditionally keeps the deps stable across
+  // protocol switches so the dialog doesn't have to remount on a
+  // protocol change.
+  const users = useUsersStore((s) => s.items);
+  const refreshUsers = useUsersStore((s) => s.refresh);
 
   // Protocol state machine. Drives both the list filter and the
   // dialog title / scope hint. Three cases instead of two because
@@ -135,7 +160,8 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
     const current = useIdentitiesStore.getState().items.find((i) => i.id === currentId);
     setMatchPathInput(computeMatchPathSeed(current?.matchPath, projectPath));
     void refreshKeys();
-  }, [open, currentId, projectPath, refreshKeys]);
+    void refreshUsers();
+  }, [open, currentId, projectPath, refreshKeys, refreshUsers]);
 
   const handleSelect = async (id: string) => {
     if (busy) return;
@@ -185,6 +211,28 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
     }
   };
 
+  const isHttps = mode === 'https';
+
+  // HTTPS path: select a User (not an Identity). Each row click
+  // dispatches a user-pick to the caller via `onSelect`. We bypass
+  // `updateIdentity`/`matchPathInput` here — the HTTPS flow writes
+  // straight to `.git/config` and never touches the identity
+  // record, so the match-path editing machinery would just be
+  // dead weight and would also confuse users who are not in the
+  // SSH mental model.
+  const handleUserPick = async (userId: string) => {
+    if (busy) return;
+    setBusy(true);
+    try {
+      await onSelect(encodeUserPick(userId));
+      onOpenChange(false);
+    } catch (e) {
+      toast.error(String(e));
+    } finally {
+      setBusy(false);
+    }
+  };
+
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
       <DialogContent className="max-w-md">
@@ -206,63 +254,90 @@ export function IdentitySwitcherDialog({ open, onOpenChange, identities, current
               : t('identitySwitcher.scopeHint.project')}
         </p>
 
-        <div className="space-y-1">
-          <Label htmlFor="matchPath">{t('identitySwitcher.matchPathLabel')}</Label>
-          <div className="flex gap-2">
-            <Input
-              id="matchPath"
-              value={matchPathInput}
-              onChange={(e) => setMatchPathInput(e.target.value)}
-              placeholder={t('identitySwitcher.matchPathPlaceholder')}
-              className="flex-1"
-            />
-            <Button type="button" variant="outline" onClick={browseMatchDir}>
-              {t('identitySwitcher.matchPathBrowse')}
-            </Button>
+        {isHttps ? (
+          // HTTPS picker: the body is just the user pool. No
+          // match-path input, no sshKeyId row — those concepts
+          // belong to the SSH identity model and would mislead
+          // the user here.
+          <div className="space-y-2 max-h-[40vh] overflow-y-auto">
+            {users.length === 0 ? (
+              <div className="text-text-1 text-sm py-4 text-center">
+                {t('identitySwitcher.emptyHttps')}
+              </div>
+            ) : (
+              users.map((u) => (
+                <button
+                  key={u.id}
+                  onClick={() => handleUserPick(u.id)}
+                  disabled={busy}
+                  className={cn(
+                    'w-full text-left p-3 rounded-md border border-border transition-colors',
+                    'hover:bg-bg-2 hover:border-border-strong'
+                  )}
+                >
+                  <div className="font-semibold">{u.name}</div>
+                  <div className="text-text-1 text-xs mt-1">{u.email}</div>
+                </button>
+              ))
+            )}
           </div>
-          <div className="text-text-2 text-xs">{t('identitySwitcher.matchPathHint')}</div>
-        </div>
-
-        <div className="space-y-2 max-h-[40vh] overflow-y-auto">
-          {filteredIdentities.length === 0 && (
-            <div className="text-text-1 text-sm py-4 text-center">
-              {identities.length === 0
-                ? t('identitySwitcher.empty')
-                : mode === 'https'
-                  ? t('identitySwitcher.emptyHttps')
-                  : mode === 'ssh'
-                    ? t('identitySwitcher.emptySsh')
-                    : t('identitySwitcher.empty')}
+        ) : (
+          <>
+            <div className="space-y-1">
+              <Label htmlFor="matchPath">{t('identitySwitcher.matchPathLabel')}</Label>
+              <div className="flex gap-2">
+                <Input
+                  id="matchPath"
+                  value={matchPathInput}
+                  onChange={(e) => setMatchPathInput(e.target.value)}
+                  placeholder={t('identitySwitcher.matchPathPlaceholder')}
+                  className="flex-1"
+                />
+                <Button type="button" variant="outline" onClick={browseMatchDir}>
+                  {t('identitySwitcher.matchPathBrowse')}
+                </Button>
+              </div>
+              <div className="text-text-2 text-xs">{t('identitySwitcher.matchPathHint')}</div>
             </div>
-          )}
-          {filteredIdentities.map((id) => {
-            const isCurrent = id.id === currentId;
-            return (
-              <button
-                key={id.id}
-                onClick={() => !isCurrent && handleSelect(id.id)}
-                disabled={isCurrent || busy}
-                className={cn(
-                  'w-full text-left p-3 rounded-md border transition-colors',
-                  isCurrent
-                    ? 'border-brand bg-brand-soft cursor-default'
-                    : 'border-border hover:bg-bg-2 hover:border-border-strong'
-                )}
-              >
-                <div className="flex items-center justify-between">
-                  <span className="font-semibold">{id.label}</span>
-                  {isCurrent && <Badge variant="outline">{t('common.current')}</Badge>}
+
+            <div className="space-y-2 max-h-[40vh] overflow-y-auto">
+              {filteredIdentities.length === 0 && (
+                <div className="text-text-1 text-sm py-4 text-center">
+                  {identities.length === 0
+                    ? t('identitySwitcher.empty')
+                    : mode === 'ssh'
+                      ? t('identitySwitcher.emptySsh')
+                      : t('identitySwitcher.empty')}
                 </div>
-                <div className="text-text-1 text-xs mt-1">{id.userEmail}</div>
-                {mode !== 'https' && (
-                  <div className="text-text-2 text-xs mt-0.5 font-mono truncate">
-                    {keys.find((key) => key.id === id.sshKeyId)?.privatePath || t('identities.noKeyBound')}
-                  </div>
-                )}
-              </button>
-            );
-          })}
-        </div>
+              )}
+              {filteredIdentities.map((id) => {
+                const isCurrent = id.id === currentId;
+                return (
+                  <button
+                    key={id.id}
+                    onClick={() => !isCurrent && handleSelect(id.id)}
+                    disabled={isCurrent || busy}
+                    className={cn(
+                      'w-full text-left p-3 rounded-md border transition-colors',
+                      isCurrent
+                        ? 'border-brand bg-brand-soft cursor-default'
+                        : 'border-border hover:bg-bg-2 hover:border-border-strong'
+                    )}
+                  >
+                    <div className="flex items-center justify-between">
+                      <span className="font-semibold">{id.label}</span>
+                      {isCurrent && <Badge variant="outline">{t('common.current')}</Badge>}
+                    </div>
+                    <div className="text-text-1 text-xs mt-1">{id.userEmail}</div>
+                    <div className="text-text-2 text-xs mt-0.5 font-mono truncate">
+                      {keys.find((key) => key.id === id.sshKeyId)?.privatePath || t('identities.noKeyBound')}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </>
+        )}
         <DialogFooter>
           <Button variant="ghost" onClick={() => onOpenChange(false)} disabled={busy}>
             {t('common.cancel')}

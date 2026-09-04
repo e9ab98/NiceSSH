@@ -143,7 +143,12 @@ pub fn apply_identity_to_repo(project_id: String, identity_id: String) -> Result
     // untouched so the UI can prompt for a URL and retry.
     let outcome = match protocol {
         "https" => {
-            io::write_repo_user_only(repo_path, identity)?;
+            io::write_repo_user_only(
+                repo_path,
+                &identity.user_name,
+                &identity.user_email,
+                &identity.label,
+            )?;
             BindOutcome::UserOnly
         }
         "ssh" | "git" => {
@@ -221,6 +226,7 @@ pub fn apply_identity_to_repo(project_id: String, identity_id: String) -> Result
                 &identity.user_name,
                 &identity.user_email,
                 &full_key,
+                identity.ssh_port,
                 signing.as_ref(),
             )?,
             BindOutcome::UserOnly => git_config::write_identity_subfile_user_only(
@@ -233,6 +239,67 @@ pub fn apply_identity_to_repo(project_id: String, identity_id: String) -> Result
             BindOutcome::NeedsRemote => {}
         }
     }
+    Ok(outcome)
+}
+
+/// Apply a [`User`](crate::config_store::User) record (from the
+/// global user pool) to a project's `.git/config` as the
+/// committer identity. This is the HTTPS counterpart of
+/// `apply_identity_to_repo`: an HTTPS remote does not need an
+/// SSH key, so binding an `Identity` (which is conceptually
+/// "key + user + match path") is overkill for the "pick a
+/// committer for this repo" use case.
+///
+/// Semantics:
+///   * Only HTTPS/HTTP remotes are supported — any other
+///     protocol falls through to `BindOutcome::NeedsRemote` to
+///     nudge the user toward the proper SSH flow (which would
+///     require an Identity with a bound key).
+///   * `[user] name/email` is rewritten in the repo's
+///     `.git/config`. Any stale `[core] sshCommand` left over
+///     from a previous SSH binding is scrubbed (same policy
+///     as `write_repo_user_only`'s identity-driven variant).
+///   * No sub-gitconfig (`~/.gitconfig-<label>`) is written:
+///     user records have no label, and the includeIf mechanism
+///     is opt-in via `Identity.match_path` anyway.
+///   * No `includeIf` is appended: user records carry no
+///     match-path. Users who want includeIf-based batch binding
+///     for multiple HTTPS repos should create a user-only
+///     `Identity` with a match path — that path remains
+///     unchanged.
+pub fn apply_user_to_repo(
+    project_id: String,
+    user_id: String,
+) -> Result<BindOutcome> {
+    let cfg = config_store::read()?;
+    let project = cfg
+        .projects
+        .iter()
+        .find(|p| p.id == project_id)
+        .ok_or_else(|| AppError::NotFound(format!("project {}", project_id)))?;
+    let user = cfg
+        .users
+        .iter()
+        .find(|u| u.id == user_id)
+        .ok_or_else(|| AppError::NotFound(format!("user {}", user_id)))?;
+    let repo_path = Path::new(&project.path);
+    let repo_cfg = crate::commands::git::get_repo_git_config_inner(repo_path)?;
+    let protocol = repo_cfg.remote_protocol.as_deref().unwrap_or("unknown");
+    let outcome = match protocol {
+        "https" | "http" => {
+            // `history_label` is what shows up in the History view;
+            // `<name> <email>` is enough to identify the committer
+            // without inventing a per-user binding label.
+            io::write_repo_user_only(
+                repo_path,
+                &user.name,
+                &user.email,
+                &format!("{} <{}>", user.name, user.email),
+            )?;
+            BindOutcome::UserOnly
+        }
+        _ => BindOutcome::NeedsRemote,
+    };
     Ok(outcome)
 }
 
@@ -320,6 +387,7 @@ mod bind_tests {
                 identity_id: None,
             }).collect(),
             global_default_identity_id: None,
+            users: vec![],
         };
         fs::write(dir.join("config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
     }

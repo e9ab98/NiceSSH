@@ -11,7 +11,8 @@ import { useIdentitiesStore, useKeysStore, type SshKeyInfo } from '../store/iden
 import { useSettingsStore } from '../store/settings';
 import { useGlobalDefaultStore } from '../store/globalDefault';
 import { useRepoConfigsStore } from '../store/repoConfigs';
-import { applyIdentityToRepo, getRecentCommits, getRepoGitConfig, gitStatus, initRepo, type IdentitySource, type RepoGitConfig, type RepoStatus } from '../ipc/git';
+import { applyIdentityToRepo, applyUserToRepo, getRecentCommits, getRepoGitConfig, gitStatus, initRepo, type IdentitySource, type RepoGitConfig, type RepoStatus } from '../ipc/git';
+import { isUserPick as isUserPickEncoded, decodeUserPick } from '../features/identitySwitcher/IdentitySwitcherDialog';
 import { tryUnlockKey, isKeyEncrypted } from '../ipc/sshAdd';
 import { IdentitySwitcherDialog } from '../features/identitySwitcher/IdentitySwitcherDialog';
 import { RepoAuditDialog } from '../features/repoAudit/RepoAuditDialog';
@@ -321,6 +322,18 @@ export function ProjectsView() {
   // 'identity applied' message reflects the actual outcome (SSH vs
   // user-only vs needs-remote).
 
+  // Right after a successful ssh-style bind we pop a connection
+  // test dialog so the user learns *now* (not on the next push)
+  // whether the key/host/port combo actually authenticates. The
+  // detail panel's "Test connection" button covers the manual case;
+  // this covers the "I just bound an identity" case where the
+  // user almost certainly wants to know whether it works.
+  const [postBindTest, setPostBindTest] = useState<{
+    identityId: string;
+    identityLabel: string;
+    projectPath: string;
+  } | null>(null);
+
   const bindIdentity = async (projectId: string, identityId: string, projectPath: string) => {
     const outcome = await applyIdentityToRepo(projectId, identityId);
     if (outcome === 'needs-remote') {
@@ -348,6 +361,21 @@ export function ProjectsView() {
     // store in sync regardless of which branch the user lands in.
     try { await assign(projectId, identityId); } catch { /* no-op */ }
     toast.success(t('projects.outcome.ssh-style'));
+    // Auto-validate the SSH connection. We only do this for
+    // ssh-style (i.e. the repo has an SSH remote and the identity
+    // has a key bound) — user-only is HTTPS and needs no SSH test,
+    // needs-remote will retry through this same function once the
+    // user supplies a URL, so it doesn't need a test here. The
+    // identity is looked up from the local cache so the dialog
+    // gets a human-friendly label, not just an id.
+    const bound = identities.find((i) => i.id === identityId);
+    if (bound) {
+      setPostBindTest({
+        identityId,
+        identityLabel: bound.label,
+        projectPath,
+      });
+    }
   };
 
   /// Re-reads every backing store from disk and re-scans every
@@ -487,10 +515,49 @@ export function ProjectsView() {
     await bindIdentity(selected.id, targetIdentityId, selected.path);
   };
 
+  // HTTPS picker: dialog emits a `user:<id>` sentinel when the
+  // project protocol is https/http. We dispatch straight to
+  // `apply_user_to_repo` (writes `[user] name/email` to the repo's
+  // `.git/config`), record the binding in the project store, and
+  // toast. No SSH-key check, no match-path — the user picker is
+  // single-commit-identity-only by design.
+  const handleUserSelect = async (userId: string) => {
+    if (!selected) {
+      setSwitcherOpen(false);
+      return;
+    }
+    setSwitcherOpen(false);
+    try {
+      const outcome = await applyUserToRepo(selected.id, userId);
+      if (outcome === 'needs-remote') {
+        toast(t('projects.outcome.needs-remote'));
+        setRemotePrompt({ projectId: selected.id, identityId: userId, projectPath: selected.path });
+        return;
+      }
+      // user-only: write happened. We do NOT touch the project's
+      // identityId field — it's an SSH-only concept and clearing
+      // it would lose the project's existing SSH binding (if any).
+      // The repo-config refresh below picks up the new committer
+      // from `.git/config` and the detail panel reflects it
+      // without us needing to maintain a store flag here.
+      await refreshRepoConfigs();
+      void outcome;
+      toast.success(t('projects.outcome.user-only'));
+    } catch (e) {
+      toast.error(String(e));
+    }
+  };
+
   const handleSelect = async (targetIdentityId: string) => {
     if (!selected) {
       setSwitcherOpen(false);
       return;
+    }
+    // User-pick short-circuit (HTTPS picker path). Runs before the
+    // identityId-equality / key-bound / passphrase checks because
+    // none of those apply to a user pick.
+    if (isUserPickEncoded(targetIdentityId)) {
+      return handleUserSelect(decodeUserPick(targetIdentityId));
     }
     if (selected.identityId && targetIdentityId === selected.identityId) {
       setSwitcherOpen(false);
@@ -801,6 +868,16 @@ export function ProjectsView() {
             projectPath={selected?.path ?? ''}
             identityId={identity?.id}
             identityLabel={identity?.label}
+          />
+        )}
+        {postBindTest && (
+          <ConnectionTesterDialog
+            open={true}
+            onOpenChange={(v) => { if (!v) setPostBindTest(null); }}
+            mode="ssh"
+            projectPath={postBindTest.projectPath}
+            identityId={postBindTest.identityId}
+            identityLabel={postBindTest.identityLabel}
           />
         )}
         {contextMenu && (

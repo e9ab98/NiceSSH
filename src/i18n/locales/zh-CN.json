@@ -140,6 +140,7 @@
     "empty": "还没有身份。点击 + 新建身份 开始。",
     "generateKey": "生成密钥",
     "regenerateKey": "重新生成密钥",
+    "testConnection": "测试连接",
     "deleteConfirm": "删除该身份？",
     "created": "身份已创建",
     "keyGenerated": "密钥已生成",
@@ -206,6 +207,9 @@
     "matchPathPlaceholder": "~/work",
     "hostAlias": "主机别名",
     "gitHost": "Git 主机",
+    "sshPort": "SSH 端口",
+    "sshPortPlaceholder": "22（默认）",
+    "sshPortHint": "留空走 SSH 默认端口（22）。自建 GitLab 一般填 2222，群晖 Git Server 一般填 30003。会写入对应身份的 sshCommand \u002dp \u003cport\u003e。",
     "keyPathHint": "密钥保存的目录。私钥与公钥将在此目录下创建",
     "resetLabel": "从目录还原",
     "labelImmutable": "创建后不可修改 —— 私钥文件、~/.gitconfig 子文件、SSH 主机块都按此名定位。",
@@ -270,10 +274,10 @@
   },
   "identitySwitcher": {
     "title": "切换身份",
-    "titleHttps": "切换用户身份",
+    "titleHttps": "选择提交者",
     "titleSsh": "切换 SSH 身份",
     "empty": "还没有身份，请先创建一个。",
-    "emptyHttps": "还没有不绑 SSH 密钥的用户身份。请到「身份」→ 新建身份，留空 SSH 密钥。",
+    "emptyHttps": "暂无用户。请到「用户」标签页新建。",
     "emptySsh": "还没有绑 SSH 密钥的身份。请到「身份」→ 新建身份并绑定 SSH 密钥。",
     "scope": {
       "project": "本项目"

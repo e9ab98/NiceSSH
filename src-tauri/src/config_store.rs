@@ -37,6 +37,17 @@ pub struct Identity {
     #[serde(rename = "gitHost")]
     pub git_host: Option<String>,
 
+    /// SSH port to use when connecting to `git_host`. `None` means
+    /// "let ssh decide" (i.e. default port 22). Drives `-p <port>`
+    /// in both the SSH self-test and the `[core] sshCommand`
+    /// injected into the per-identity sub-gitconfig, so an identity
+    /// bound to a non-default port (e.g. GitLab Self-hosted on
+    /// 2222, Synology Git Server on 30003) works for both
+    /// `ssh://git@host:port/path` URLs and the `git@host:path`
+    /// shorthand — the user does not have to keep the two in sync.
+    #[serde(default, rename = "sshPort")]
+    pub ssh_port: Option<u16>,
+
     // ── v3: commit signing config ────────────────────────────────
     /// When true, commits authored under this identity should be
     /// signed. Drives `[commit] gpgsign = true` in the per-identity
@@ -99,6 +110,8 @@ pub struct IdentityInput {
     pub host_alias: Option<String>,
     #[serde(default)]
     pub git_host: Option<String>,
+    #[serde(default, rename = "sshPort")]
+    pub ssh_port: Option<u16>,
     #[serde(default)]
     pub require_signed_commits: bool,
     #[serde(default)]
@@ -174,6 +187,7 @@ impl Identity {
             match_path: input.match_path,
             host_alias: input.host_alias,
             git_host: input.git_host,
+            ssh_port: input.ssh_port,
             require_signed_commits: input.require_signed_commits,
             signing_key_id: input.signing_key_id,
             signing_key_kind: input.signing_key_kind,
@@ -1380,6 +1394,7 @@ mod tests {
             match_path: Some("~/personal".into()),
             host_alias: Some("github.com".into()),
             git_host: Some("github.com".into()),
+            ssh_port: Some(2222),
             require_signed_commits: true,
             signing_key_id: Some("k1".into()),
             signing_key_kind: SigningKeyKind::Ssh,
@@ -1391,6 +1406,7 @@ mod tests {
         assert_eq!(id.user_email, "b@x");
         assert_eq!(id.ssh_key_id.as_deref(), Some("k1"));
         assert_eq!(id.match_path.as_deref(), Some("~/personal"));
+        assert_eq!(id.ssh_port, Some(2222));
         assert!(id.require_signed_commits);
         assert_eq!(id.signing_key_id.as_deref(), Some("k1"));
         assert_eq!(id.signing_key_kind, SigningKeyKind::Ssh);

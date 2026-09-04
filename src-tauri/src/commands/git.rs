@@ -26,6 +26,18 @@ pub fn apply_identity_to_repo(
     bind::apply_identity_to_repo(project_id, identity_id)
 }
 
+/// HTTPS counterpart of `apply_identity_to_repo`: bind a
+/// [`User`](crate::config_store::User) from the global user pool
+/// (not a full `Identity`) to a project's `.git/config`. See
+/// [`bind::apply_user_to_repo`] for the actual logic.
+#[tauri::command]
+pub fn apply_user_to_repo(
+    project_id: String,
+    user_id: String,
+) -> Result<bind::BindOutcome> {
+    bind::apply_user_to_repo(project_id, user_id)
+}
+
 /// Thin-shell IPC command. See [`crate::git::init::init_repo`] for the
 /// actual logic. The command is intentionally narrow: it does NOT
 /// touch SSH keys or remote URLs. The UI is expected to chain into
@@ -337,7 +349,14 @@ pub fn test_ssh_connection(identity_id: String) -> Result<SshTestResult> {
     let full_key = config_store::identity_private_path(&cfg, identity)?;
     let key_path = paths::expand_home(&full_key);
     let key_str = key_path.to_string_lossy();
-    let args = [
+    // `-p <port>` is appended only when the identity is bound to a
+    // non-default SSH port. Without it ssh always dials 22, which
+    // silently fails for self-hosted GitLab / Synology Git Server
+    // / GitHub Enterprise deployments that listen on e.g. 2222 or
+    // 30003 — the test would then falsely report "auth failed"
+    // even though the real problem is "wrong port".
+    let port_arg: Option<String> = identity.ssh_port.map(|p| p.to_string());
+    let mut args: Vec<&str> = vec![
         "-T",
         "-i",
         &key_str,
@@ -347,8 +366,16 @@ pub fn test_ssh_connection(identity_id: String) -> Result<SshTestResult> {
         "StrictHostKeyChecking=accept-new",
         "-o",
         "BatchMode=yes",
-        &format!("git@{}", host),
     ];
+    if let Some(p) = port_arg.as_deref() {
+        args.push("-p");
+        args.push(p);
+    }
+    // Bind the user-at-host string to a local first; the original
+    // `&format!(...)` form created a temporary that was dropped
+    // before `runner::exec` finished reading `args`.
+    let user_at_host = format!("git@{}", host);
+    args.push(&user_at_host);
     let r = runner::exec("ssh", &args)?;
     let truncated = format_test_output(&r.stdout, &r.stderr);
     let exit_ok = r.exit_code == Some(0) || r.exit_code == Some(1);

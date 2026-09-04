@@ -70,6 +70,7 @@ pub fn run() {
             commands::git::git_pull,
             commands::git::git_fetch,
             commands::git::apply_identity_to_repo,
+            commands::git::apply_user_to_repo,
             commands::git::write_repo_remote,
             commands::git::get_recent_commits,
             commands::git::get_repo_git_config,

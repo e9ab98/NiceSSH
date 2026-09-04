@@ -109,7 +109,27 @@ pub(crate) fn write_repo_gitconfig(repo_path: &Path, identity: &Identity) -> Res
 /// *only* the `[user]` block, leaving any pre-existing
 /// `[core] sshCommand` line alone. Used by `apply_identity_to_repo`'s
 /// `BindOutcome::UserOnly` branch.
-pub(crate) fn write_repo_user_only(repo_path: &Path, identity: &Identity) -> Result<()> {
+pub(crate) fn write_repo_user_only(
+    repo_path: &Path,
+    // `(name, email)` for the `[user]` block. The two strings are
+    // taken individually (rather than as `&Identity`) so this
+    // function serves both call sites:
+    //
+    //   * `apply_identity_to_repo`'s `BindOutcome::UserOnly`
+    //     branch (HTTPS remote, the user picked a user-only
+    //     `Identity`).
+    //   * `apply_user_to_repo` (HTTPS remote, the user picked a
+    //     `User` from the global user pool — no Identity involved).
+    //
+    // Both paths produce byte-identical `.git/config` writes; the
+    // only difference is the history `operation` label.
+    user_name: &str,
+    user_email: &str,
+    // Human-friendly label for the history entry. Pass `identity.label`
+    // from the identity path or `user.name <user.email>` from the
+    // user path; it's never parsed, only displayed in History view.
+    history_label: &str,
+) -> Result<()> {
     let gitconfig = repo_path.join(".git").join("config");
     if !gitconfig.exists() {
         return Err(AppError::NotFound(format!(
@@ -123,26 +143,25 @@ pub(crate) fn write_repo_user_only(repo_path: &Path, identity: &Identity) -> Res
     // [core] sshCommand line left over from an SSH binding
     // (HTTPS repos must not carry sshCommand at all).
     //
-    // This function is only called from apply_identity_to_repo's
-    // BindOutcome::UserOnly branch, so it always runs on an
-    // HTTPS-or-unknown-protocol repo. The strip is safe here:
-    // any user-written (non-managed) [user] block would also be
-    // dropped, but in practice a repo that has been bound by
-    // nicessh before will have the # nicessh-managed marker on
-    // the previous [user] block, and a fresh binding is
-    // exactly when the previous identity should be overwritten.
+    // This function is only called from HTTPS-or-unknown-protocol
+    // repos, so the strip is safe here: any user-written (non-
+    // managed) [user] block would also be dropped, but in practice
+    // a repo that has been bound by nicessh before will have the
+    // # nicessh-managed marker on the previous [user] block, and a
+    // fresh binding is exactly when the previous identity should
+    // be overwritten.
     let stripped = splice::strip_managed_block(&raw);
     let new_raw = splice::splice_user_only_into_config(
         &stripped,
-        &identity.user_name,
-        &identity.user_email,
+        user_name,
+        user_email,
     );
     if new_raw == raw {
         return Ok(());
     }
     history::commit_change(
-        "apply_identity_to_repo_user_only",
-        &format!("Applied identity {} to repo (user-only, HTTPS remote)", identity.label),
+        "apply_user_to_repo_user_only",
+        &format!("Applied committer {} to repo (user-only, HTTPS remote)", history_label),
         std::iter::once((
             gitconfig.to_string_lossy().to_string(),
             history::FileChange {
@@ -386,6 +405,7 @@ mod io_tests {
                     identity_id: Some(id.id.clone()),
                 }],
                 global_default_identity_id: None,
+            users: vec![],
             };
             fs::create_dir_all(home().join(".nicessh")).unwrap();
             fs::write(home().join(".nicessh/config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
@@ -431,7 +451,7 @@ mod io_tests {
             let repo = home().join("repo");
             write_repo_config(&repo,
                 "[user]\n    name = Old\n    email = o@x\n[core]\n    sshCommand = ssh -i ~/.ssh/LEGACY\n");
-            write_repo_user_only(&repo, &id).unwrap();
+            write_repo_user_only(&repo, &id.user_name, &id.user_email, &id.label).unwrap();
             let after = fs::read_to_string(repo.join(".git/config")).unwrap();
             // [user] swapped
             assert!(after.contains("name = Alice"), "got:\n{after}");
@@ -497,6 +517,7 @@ mod io_tests {
                     identity_id: Some("id1".into()),
                 }],
                 global_default_identity_id: None,
+            users: vec![],
             };
             std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
             super::clean_repo_gitconfig("p1".into()).unwrap();
@@ -537,6 +558,7 @@ mod io_tests {
                     identity_id: Some("id1".into()),
                 }],
                 global_default_identity_id: None,
+            users: vec![],
             };
             std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
             super::clean_repo_gitconfig("p1".into()).unwrap();
@@ -575,6 +597,7 @@ mod io_tests {
                     identity_id: Some("id1".into()),
                 }],
                 global_default_identity_id: None,
+            users: vec![],
             };
             std::fs::write(dir.join("config.json"), serde_json::to_string_pretty(&cfg).unwrap()).unwrap();
             super::clean_repo_gitconfig("p1".into()).unwrap();
@@ -604,7 +627,7 @@ mod io_tests {
                 ssh_key_id: None, match_path: None,
                             ..Default::default()
             };
-            super::write_repo_user_only(&repo, &id).unwrap();
+            super::write_repo_user_only(&repo, &id.user_name, &id.user_email, &id.label).unwrap();
             let raw = std::fs::read_to_string(repo.join(".git/config")).unwrap();
             assert!(raw.contains("name = New"), "new user block must be written; got:\n{raw}");
             assert!(raw.contains("email = n@x"), "new email must be written; got:\n{raw}");

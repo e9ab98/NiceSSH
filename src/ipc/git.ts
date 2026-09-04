@@ -102,6 +102,15 @@ export type BindOutcome = 'ssh-style' | 'user-only' | 'needs-remote';
 export const applyIdentityToRepo = (projectId: string, identityId: string) =>
   ipc<BindOutcome>('apply_identity_to_repo', { projectId, identityId });
 
+/// HTTPS counterpart of `applyIdentityToRepo`: write a User's
+/// `(name, email)` pair straight into the project's `.git/config`
+/// without going through an Identity record. Identity is conceptually
+/// "key + user + match path" — for HTTPS projects none of those
+/// apply, so the switcher dialog selects from the User pool and
+/// dispatches here.
+export const applyUserToRepo = (projectId: string, userId: string) =>
+  ipc<BindOutcome>('apply_user_to_repo', { projectId, userId });
+
 export const writeRepoRemote = (
   path: string,
   url: string,

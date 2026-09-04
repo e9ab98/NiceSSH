@@ -11,6 +11,7 @@ import { useGlobalDefaultStore } from '../store/globalDefault';
 import { IdentityFormDialog } from '../features/identityForm/IdentityFormDialog';
 import { KeyGeneratorDialog } from '../features/keyGenerator/KeyGeneratorDialog';
 import { ScanResultsDialog } from '../features/scanResults/ScanResultsDialog';
+import { ConnectionTesterDialog } from '../features/connectionTester/ConnectionTesterDialog';
 import { ClearGlobalDefaultDialog } from '../features/clearGlobalDefault/ClearGlobalDefaultDialog';
 import { Tabs, TabsList, TabsTrigger, TabsContent } from '../components/ui/tabs';
 import { UsersTab } from '../features/usersTab/UsersTab';
@@ -139,6 +140,11 @@ export function IdentitiesTab() {
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Identity | null>(null);
   const [genFor, setGenFor] = useState<Identity | null>(null);
+  // Identity currently being SSH-tested from the card-level "Test
+  // connection" button. Drives the ConnectionTesterDialog below and
+  // disables the per-row button so the user can't fire two parallel
+  // tests for the same identity.
+  const [testingIdentity, setTestingIdentity] = useState<Identity | null>(null);
   const [scanOpen, setScanOpen] = useState(false);
   const [candidates, setCandidates] = useState<ScannedIdentity[]>([]);
   const [scanning, setScanning] = useState(false);
@@ -223,6 +229,12 @@ export function IdentitiesTab() {
           matchPath: c.matchPath,
           hostAlias: null,
           gitHost: null,
+          // v4: scanned identities have no SSH port — the scanner
+          // can read Host blocks but the port we'd want is the
+          // one used by the user's `git remote -v`, not the one
+          // from the SSH config; default to none so the user
+          // can fill it in via the edit dialog if needed.
+          sshPort: null,
           // v3: scanned identities have no signing config.
           requireSignedCommits: false,
           signingKeyId: null,
@@ -386,7 +398,10 @@ export function IdentitiesTab() {
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2">
                     <span className="font-medium">{id.label}</span>
-                    <Badge variant="outline">{id.hostAlias ?? 'github.com'}</Badge>
+                    <Badge variant="outline">
+                      {id.hostAlias ?? 'github.com'}
+                      {id.sshPort != null ? `:${id.sshPort}` : ''}
+                    </Badge>
                   </div>
                   <div className="text-text-1 text-sm mt-1">{id.userName} &lt;{id.userEmail}&gt;</div>
                   {keyById(id.sshKeyId) ? (
@@ -402,6 +417,16 @@ export function IdentitiesTab() {
                   {id.matchPath && <div className="text-text-2 text-xs mt-0.5">{t('identities.match')}: {id.matchPath}</div>}
                 </div>
                 <div className="flex gap-2 shrink-0">
+                  <Button
+                    variant="outline"
+                    size="sm"
+                    disabled={!id.sshKeyId || testingIdentity?.id === id.id}
+                    onClick={() => setTestingIdentity(id)}
+                  >
+                    {testingIdentity?.id === id.id
+                      ? t('identities.testing')
+                      : t('identities.testConnection')}
+                  </Button>
                   <Button variant="outline" size="sm" onClick={() => setEditing(id)}>
                     {t('common.edit')}
                   </Button>
@@ -428,6 +453,16 @@ export function IdentitiesTab() {
             toast.success(t('identities.created'));
           }}
         />
+        {testingIdentity && (
+          <ConnectionTesterDialog
+            open={true}
+            onOpenChange={(v) => { if (!v) setTestingIdentity(null); }}
+            mode="ssh"
+            projectPath=""
+            identityId={testingIdentity.id}
+            identityLabel={testingIdentity.label}
+          />
+        )}
         {editing && (
           <IdentityFormDialog
             open={!!editing}

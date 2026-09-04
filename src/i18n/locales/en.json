@@ -140,6 +140,7 @@
     "empty": "No identities yet. Click + New Identity to start.",
     "generateKey": "Generate Key",
     "regenerateKey": "Re-generate Key",
+    "testConnection": "Test Connection",
     "deleteConfirm": "Delete this identity?",
     "created": "Identity created",
     "keyGenerated": "Key generated",
@@ -206,6 +207,9 @@
     "matchPathPlaceholder": "~/work",
     "hostAlias": "Host Alias",
     "gitHost": "Git Host",
+    "sshPortHint": "Leave blank to use the SSH default port (22). Set to e.g. 2222 for self-hosted GitLab or 30003 for Synology Git Server. Drives `-p <port>` in the per-identity sshCommand.",
+    "sshPortPlaceholder": "22 (default)",
+    "sshPort": "SSH Port",
     "keyPathHint": "Directory where the key pair will be created",
     "resetLabel": "Reset from folder",
     "labelImmutable": "Cannot be changed after creation — the SSH key file, ~/.gitconfig subfile, and SSH host block all use this name.",
@@ -270,10 +274,10 @@
   },
   "identitySwitcher": {
     "title": "Switch Identity",
-    "titleHttps": "Switch User Identity",
+    "titleHttps": "Select Committer",
     "titleSsh": "Switch SSH Identity",
     "empty": "No identities. Create one first.",
-    "emptyHttps": "No user identities. Open Identities → New Identity and leave the SSH key empty.",
+    "emptyHttps": "No users yet. Open the Users tab to create one.",
     "emptySsh": "No SSH identities. Open Identities → New Identity and bind an SSH key.",
     "scope": {
       "project": "This project"

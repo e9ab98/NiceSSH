@@ -8,6 +8,20 @@ import { useKeysStore, type SshKeyInfo } from '../../store/identities';
 import { useUsersStore } from '../../store/users';
 import type { Identity, SigningKeyKind } from '../../ipc/identities';
 import type { User } from '../../ipc/users';
+function parseSshPort(raw: string): number | null {
+  // Empty / whitespace → "use default" (matches the `null` payload).
+  const trimmed = raw.trim();
+  if (trimmed === '') return null;
+  // Reject anything that isn't a clean 1–65535 integer. We avoid
+  // silently clamping (e.g. "0" → null, "70000" → null) because that
+  // would mask user typos; bouncing the value back via HTML form
+  // validation is the friendlier UX.
+  if (!/^\d+$/.test(trimmed)) return null;
+  const n = Number(trimmed);
+  if (!Number.isInteger(n) || n < 1 || n > 65535) return null;
+  return n;
+}
+
 function sanitizeLabel(value: string): string {
   return value.replace(/[\\/]+/g, '_');
 }
@@ -29,6 +43,13 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
   const [userEmail, setUserEmail] = useState(initial?.userEmail ?? '');
   const [hostAlias, setHostAlias] = useState(initial?.hostAlias ?? 'github.com');
   const [gitHost, setGitHost] = useState(initial?.gitHost ?? 'github.com');
+  // Non-default SSH port (e.g. 2222 for self-hosted GitLab, 30003
+  // for Synology Git Server). `null` → no `-p` arg → default port 22.
+  // Stored as a string so the input can hold an empty field while
+  // the user is typing; we coerce to number | null at submit time.
+  const [sshPortInput, setSshPortInput] = useState<string>(
+    initial?.sshPort != null ? String(initial.sshPort) : '',
+  );
   // v3: commit signing fields. Defaults: signing off; if the
   // user enables it, default to reusing the identity's push
   // SSH key (signingKeyId = sshKeyId), since "same key for push
@@ -78,6 +99,7 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
     setUserEmail(initial?.userEmail ?? '');
     setHostAlias(initial?.hostAlias ?? 'github.com');
     setGitHost(initial?.gitHost ?? 'github.com');
+    setSshPortInput(initial?.sshPort != null ? String(initial.sshPort) : '');
     setRequireSignedCommits(initial?.requireSignedCommits ?? false);
     setSigningKeyId(initial?.signingKeyId ?? initial?.sshKeyId ?? null);
     setSigningKeyKind(initial?.signingKeyKind ?? 'ssh');
@@ -105,6 +127,7 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
         matchPath: initial?.matchPath ?? null,
         hostAlias: hostAlias || null,
         gitHost: gitHost || null,
+        sshPort: parseSshPort(sshPortInput),
         requireSignedCommits,
         signingKeyId: finalSigningKeyId,
         signingKeyKind,
@@ -122,6 +145,7 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
     setUserEmail('');
     setHostAlias('github.com');
     setGitHost('github.com');
+    setSshPortInput('');
     setRequireSignedCommits(false);
     setSigningKeyId(null);
     setSigningKeyKind('ssh');
@@ -189,10 +213,25 @@ export function IdentityFormDialog({ open, onOpenChange, initial, defaultLabel, 
             <div><Label htmlFor="userName">{t('identityForm.userName')}</Label><Input id="userName" value={userName} onChange={(event) => setUserName(event.target.value)} required /></div>
             <div><Label htmlFor="userEmail">{t('identityForm.userEmail')}</Label><Input id="userEmail" type="email" value={userEmail} onChange={(event) => setUserEmail(event.target.value)} required /></div>
           </div>
-          <div className="grid grid-cols-2 gap-3">
+          <div className="grid grid-cols-3 gap-3">
             <div><Label htmlFor="hostAlias">{t('identityForm.hostAlias')}</Label><Input id="hostAlias" value={hostAlias} onChange={(event) => setHostAlias(event.target.value)} placeholder="github.com" /></div>
             <div><Label htmlFor="gitHost">{t('identityForm.gitHost')}</Label><Input id="gitHost" value={gitHost} onChange={(event) => setGitHost(event.target.value)} placeholder="github.com" /></div>
+            <div>
+              <Label htmlFor="sshPort">{t('identityForm.sshPort')}</Label>
+              <Input
+                id="sshPort"
+                type="number"
+                inputMode="numeric"
+                min={1}
+                max={65535}
+                step={1}
+                value={sshPortInput}
+                onChange={(event) => setSshPortInput(event.target.value)}
+                placeholder={t('identityForm.sshPortPlaceholder')}
+              />
+            </div>
           </div>
+          <p className="text-text-2 text-xs -mt-2">{t('identityForm.sshPortHint')}</p>
 
           {/* ── v3: commit signing ─────────────────────────────── */}
           <div className="rounded-md border border-border bg-bg-0 p-3 space-y-2">
