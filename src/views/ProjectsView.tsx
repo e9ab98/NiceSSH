@@ -83,22 +83,6 @@ function detectIdentity(
   return { kind: 'none' };
 }
 
-/// Best-effort transformation of an HTTPS URL into its SSH form.
-/// Returns null if the URL shape is too exotic to safely auto-convert
-/// (in which case we leave the user to type a URL themselves). The
-/// rule: replace `https?://HOST/` with `git@HOST:`, dropping any
-/// leading `www.`, and keeping the path verbatim. Trailing `.git`
-/// is preserved.
-function deriveSshUrlFromHttps(remoteUrl: string | null | undefined): string | null {
-  if (!remoteUrl) return null;
-  const m = remoteUrl.trim().match(/^https?:\/\/([^\/]+)\/(.+?)(?:\.git)?$/);
-  if (!m) return null;
-  const host = m[1].replace(/^www\./, '');
-  const path = m[2];
-  if (!host.includes('.')) return null; // bare hostname is suspicious
-  return `git@${host}:${path}.git`;
-}
-
 function deriveName(p: string): string {
   const trimmed = p.replace(/[\\/]+$/, '');
   const seg = trimmed.split(/[\\/]/).pop();
@@ -313,9 +297,10 @@ export function ProjectsView() {
     identityId: string;
     projectPath: string;
     /// When set, the RemoteUrlPromptDialog renders with this URL
-    /// pre-filled. Used both by the "this project has no remote"
-    /// flow (no prefill) and by the "switch this HTTPS remote to
-    /// SSH…" flow (prefilled with `deriveSshUrlFromHttps(...)`).
+    /// pre-filled. Currently no caller pre-fills — the user types
+    /// the URL themselves — but the field stays so future flows
+    /// (e.g. a "switch this HTTPS remote to SSH…" shortcut) can
+    /// seed it without another refactor.
     prefillUrl?: string;
   } | null>(null);
   // Pending toast i18n key to show *after* a successful retry, so the
@@ -579,7 +564,7 @@ export function ProjectsView() {
     // the duration of this submit — the user can retry once the
     // refresh completes.
     const targetProtocol = repoConfigs[selected.id]?.remoteProtocol;
-    const isHttps = targetProtocol === 'https' || targetProtocol === 'http';
+    const isHttps = targetProtocol === 'https';
     const fullKp = privatePathFor(target);
     if (!fullKp && !isHttps) {
       toast.error(t('identities.noKeyBound'));
